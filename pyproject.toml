@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "muse2-music-lab"
+version = "0.1.0"
+description = "Experiments turning a Muse 2 EEG headset into a music production controller (LSL + OSC)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Ashrit" }]
+dependencies = [
+    "muselsl>=2.3",
+    "numpy>=1.24",
+    "pylsl>=1.16",
+    "python-osc>=1.8",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.4"]
+
+[project.scripts]
+muse2-music = "muse2_music_lab.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
