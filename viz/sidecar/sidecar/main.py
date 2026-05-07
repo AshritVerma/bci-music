@@ -68,8 +68,21 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="File watched for /viz/prompt/base updates (leave empty to disable)",
     )
     p.add_argument("--syphon-name", default="Muse2Viz")
-    p.add_argument("--width", type=int, default=512)
-    p.add_argument("--height", type=int, default=512)
+    p.add_argument(
+        "--width",
+        type=int,
+        default=384,
+        help=(
+            "Output width. Default 384 trades mild softness for ~7 fps headroom. "
+            "Use 512 for SDXL-Turbo's native trained resolution at ~5 fps."
+        ),
+    )
+    p.add_argument(
+        "--height",
+        type=int,
+        default=384,
+        help="Output height. See --width.",
+    )
     p.add_argument("--steps", type=int, default=1, help="Diffusion steps per frame")
     p.add_argument(
         "--backend",

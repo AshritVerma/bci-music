@@ -3,7 +3,7 @@
 Diffusion sidecar for the muse2 visual layer.
 
 - Listens on OSC for `/viz/params/*` and `/viz/prompt/*`.
-- Runs SDXL-Turbo (via Hugging Face `diffusers` on the MPS backend) at ~512×512, 1–2 steps.
+- Runs SDXL-Turbo (via Hugging Face `diffusers` on the MPS backend) at 384×384 by default (~7 fps on M4 Max with TAESD VAE + prompt-embedding cache); 512×512 for native quality at ~5 fps.
 - Publishes RGB frames to a named Syphon server so TouchDesigner can pick them up via a Syphon Spout In TOP.
 
 ## Install
@@ -24,13 +24,21 @@ First run will download the SDXL-Turbo weights (~6 GB) into the Hugging Face cac
 ## Run
 
 ```bash
+# Defaults to 384x384 + tiny VAE + 1 step (~7 fps on M4 Max):
+muse2-viz-sidecar
+
+# Native trained resolution (slower but sharper):
+muse2-viz-sidecar --width 512 --height 512
+
+# All flags explicit:
 muse2-viz-sidecar \
     --listen-host 127.0.0.1 \
     --listen-port 9100 \
     --prompts ../prompts/default.yaml \
     --syphon-name Muse2Viz \
-    --width 512 --height 512 \
-    --steps 1
+    --width 384 --height 384 \
+    --steps 1 \
+    --vae tiny
 ```
 
 Then in TouchDesigner, add a **Syphon Spout In TOP** and set its `Sender Name` to `Muse2Viz`.
