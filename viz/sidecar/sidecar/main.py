@@ -78,6 +78,16 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="Diffusion backend. 'fake' = procedural RGBA noise for pipeline testing.",
     )
     p.add_argument(
+        "--vae",
+        choices=("tiny", "full"),
+        default="tiny",
+        help=(
+            "VAE choice for the diffusers backend. 'tiny' = TAESD "
+            "(madebyollin/taesdxl, ~5-10x faster decode on MPS, slight quality "
+            "loss); 'full' = standard SDXL VAE."
+        ),
+    )
+    p.add_argument(
         "--prompt-source",
         choices=("auto", "manual", "mix"),
         default="auto",
@@ -118,7 +128,7 @@ def main(argv=None) -> int:
         watcher = PromptFileWatcher(Path(args.live_prompt_file), state)
         print(f"[prompt] watching {args.live_prompt_file}", flush=True)
 
-    backend = build_backend(args.backend, width=args.width, height=args.height)
+    backend = build_backend(args.backend, width=args.width, height=args.height, vae=args.vae)
 
     publisher = None
     if not args.no_syphon:

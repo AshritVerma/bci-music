@@ -97,6 +97,15 @@ class DiffusersMpsBackend(DiffusionBackend):
     """SDXL-Turbo via `diffusers`, `torch.mps`. Uses img2img when a previous
     frame is available so temporal coherence holds; falls back to text2img
     on the first step.
+
+    Realtime optimizations:
+      * **TAESD** (`madebyollin/taesdxl`) replaces the heavy SDXL VAE for
+        ~5-10x faster decode on MPS at minimal quality loss for live use.
+      * **Prompt embedding cache** keyed on (prompt, negative_prompt). When
+        the prompt hasn't changed (the common case in `auto` mode where
+        only a few banks are interpolated), we skip text encoding entirely.
+      * **Warmup pass** at init so the first user-visible frame doesn't
+        eat the MPS kernel-compilation cost.
     """
 
     def __init__(
@@ -104,24 +113,97 @@ class DiffusersMpsBackend(DiffusionBackend):
         model_id: str = "stabilityai/sdxl-turbo",
         device: str = "mps",
         dtype: str = "float16",
+        vae: str = "tiny",
+        warmup: bool = True,
     ) -> None:
         # Heavy imports are deferred so `--backend fake` works on machines
         # without the ML stack installed.
         import torch  # type: ignore
-        from diffusers import AutoPipelineForImage2Image, AutoPipelineForText2Image  # type: ignore
+        from diffusers import (  # type: ignore
+            AutoPipelineForImage2Image,
+            AutoPipelineForText2Image,
+            AutoencoderTiny,
+        )
 
         torch_dtype = {"float16": torch.float16, "float32": torch.float32}[dtype]
 
-        print(f"[diffusion] loading {model_id} on {device} ({dtype})...", flush=True)
+        print(f"[diffusion] loading {model_id} on {device} ({dtype}, vae={vae})...", flush=True)
         self._txt2img = AutoPipelineForText2Image.from_pretrained(
             model_id, torch_dtype=torch_dtype, variant="fp16"
         ).to(device)
+
+        if vae == "tiny":
+            tiny = AutoencoderTiny.from_pretrained(
+                "madebyollin/taesdxl", torch_dtype=torch_dtype
+            ).to(device)
+            self._txt2img.vae = tiny
+
         self._img2img = AutoPipelineForImage2Image.from_pipe(self._txt2img).to(device)
-        # Disable safety checker / progress bars for realtime use.
         self._txt2img.set_progress_bar_config(disable=True)
         self._img2img.set_progress_bar_config(disable=True)
+
+        self._torch = torch
         self._device = device
+        self._dtype = torch_dtype
+
+        # (prompt, negative_prompt) -> (prompt_embeds, neg_embeds, pooled, neg_pooled)
+        self._prompt_cache: dict[tuple[str, str], tuple] = {}
+        self._prompt_cache_max = 16
+
+        if warmup:
+            self._warmup()
+
         print("[diffusion] ready", flush=True)
+
+    # ------------------------------------------------------------------ #
+    # internal helpers
+    # ------------------------------------------------------------------ #
+
+    def _warmup(self) -> None:
+        """Run one tiny txt2img pass so MPS kernel compilation happens here,
+        not on the first user-visible frame."""
+        print("[diffusion] warming up MPS kernels...", flush=True)
+        try:
+            self._txt2img(
+                prompt="warmup",
+                num_inference_steps=1,
+                guidance_scale=0.0,
+                width=512,
+                height=512,
+            )
+        except Exception as e:
+            print(f"[diffusion] warmup skipped: {e}", flush=True)
+
+    def _encode_prompt(self, prompt: str, negative_prompt: str):
+        """Cached SDXL prompt encoding. SDXL needs four embed tensors."""
+        key = (prompt, negative_prompt or "")
+        cached = self._prompt_cache.get(key)
+        if cached is not None:
+            return cached
+        with self._torch.no_grad():
+            (
+                prompt_embeds,
+                negative_prompt_embeds,
+                pooled_prompt_embeds,
+                negative_pooled_prompt_embeds,
+            ) = self._txt2img.encode_prompt(
+                prompt=prompt,
+                negative_prompt=negative_prompt or None,
+                device=self._device,
+                num_images_per_prompt=1,
+                do_classifier_free_guidance=False,
+            )
+        result = (
+            prompt_embeds,
+            negative_prompt_embeds,
+            pooled_prompt_embeds,
+            negative_pooled_prompt_embeds,
+        )
+        if len(self._prompt_cache) >= self._prompt_cache_max:
+            # Evict an arbitrary entry (we don't need LRU precision here).
+            self._prompt_cache.pop(next(iter(self._prompt_cache)))
+        self._prompt_cache[key] = result
+        return result
 
     @staticmethod
     def _to_pil(arr: np.ndarray):
@@ -129,7 +211,7 @@ class DiffusersMpsBackend(DiffusionBackend):
 
         if arr.shape[-1] == 4:
             arr = arr[..., :3]
-        return Image.fromarray(arr, mode="RGB")
+        return Image.fromarray(arr)
 
     @staticmethod
     def _from_pil(img) -> np.ndarray:
@@ -140,13 +222,22 @@ class DiffusersMpsBackend(DiffusionBackend):
         rgba[..., 3] = 255
         return rgba
 
+    # ------------------------------------------------------------------ #
+    # public API
+    # ------------------------------------------------------------------ #
+
     def render(self, req: RenderRequest) -> np.ndarray:
         plan = req.plan
         steps = max(1, int(req.steps))
+
+        prompt_embeds, neg_embeds, pooled, neg_pooled = self._encode_prompt(
+            plan.prompt, plan.negative_prompt or ""
+        )
+
         if req.prev_frame is None:
             out = self._txt2img(
-                prompt=plan.prompt,
-                negative_prompt=plan.negative_prompt or None,
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled,
                 num_inference_steps=steps,
                 guidance_scale=plan.guidance,
                 width=req.width,
@@ -154,11 +245,11 @@ class DiffusersMpsBackend(DiffusionBackend):
             ).images[0]
         else:
             prev = self._to_pil(req.prev_frame)
-            # img2img needs enough steps that int(steps * strength) >= 1.
+            # img2img needs enough scheduler steps that int(steps * strength) >= 1.
             eff_steps = max(steps, int(1 / max(plan.strength, 0.01)) + 1)
             out = self._img2img(
-                prompt=plan.prompt,
-                negative_prompt=plan.negative_prompt or None,
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled,
                 image=prev,
                 num_inference_steps=eff_steps,
                 strength=plan.strength,
@@ -167,10 +258,16 @@ class DiffusersMpsBackend(DiffusionBackend):
         return self._from_pil(out)
 
 
-def build_backend(name: str, *, width: int, height: int) -> DiffusionBackend:
+def build_backend(
+    name: str,
+    *,
+    width: int,
+    height: int,
+    vae: str = "tiny",
+) -> DiffusionBackend:
     name = (name or "").lower()
     if name == "fake":
         return FakeBackend()
     if name in ("diffusers", "mps", "diffusers-mps", ""):
-        return DiffusersMpsBackend()
+        return DiffusersMpsBackend(vae=vae)
     raise ValueError(f"Unknown diffusion backend: {name!r}")
