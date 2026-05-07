@@ -1,0 +1,35 @@
+# Prompt bank for the muse2 viz sidecar.
+#
+# `banks` names prompts. `blend_poles` picks the two the sidecar interpolates
+# between as /viz/params/prompt_blend sweeps from 0.0 (pole A) to 1.0 (pole B).
+# `style_default` is appended to every prompt in auto/mix modes.
+
+banks:
+  calm: >-
+    soft watercolor sky, gentle flowing shapes, pastel tones, minimal
+    composition, dreamlike atmosphere
+  energetic: >-
+    vivid neon cityscape at night, motion blur, high contrast, electric
+    colors, kinetic energy, glitch aesthetic
+  focused: >-
+    clean geometric architecture, isometric view, crisp edges, cool steel
+    and cyan tones, precise lines, brutalist symmetry
+  abstract: >-
+    abstract liquid marble, swirling pigment, iridescent surfaces, organic
+    flow, macro photography
+  organic: >-
+    bioluminescent forest at dusk, moss and ferns, magical particles, deep
+    greens and teals, volumetric haze
+  geometric: >-
+    intricate fractal tessellation, sacred geometry, gold on black, endless
+    recursion
+
+blend_poles: [calm, energetic]
+
+style_default: >-
+  cinematic, high detail, volumetric light, 35mm film grain,
+  professional color grading
+
+negative_prompt: >-
+  low quality, blurry, watermark, text, logo, frame, border, ugly,
+  deformed, jpeg artifacts
