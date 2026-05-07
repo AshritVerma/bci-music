@@ -22,3 +22,5 @@ build/
 recordings/
 *.csv
 *.xdf
+*.mov
+*.egg-info/
