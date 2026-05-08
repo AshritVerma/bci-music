@@ -14,6 +14,11 @@ def list_output_ports() -> List[str]:
     return list(mido.get_output_names())
 
 
+def list_input_ports() -> List[str]:
+    """Return available MIDI input port names."""
+    return list(mido.get_input_names())
+
+
 def _clamp_cc(value: float) -> int:
     v = int(round(float(value) * 127.0))
     return max(0, min(127, v))

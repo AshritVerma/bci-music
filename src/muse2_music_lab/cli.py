@@ -60,6 +60,28 @@ def _cmd_list_midi(_: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_monitor_midi(args: argparse.Namespace) -> int:
+    from muse2_music_lab.midi_monitor import run as monitor_run
+    return monitor_run(args.midi_port)
+
+
+def _cmd_simulate(args: argparse.Namespace) -> int:
+    from muse2_music_lab.simulate import SimulateOptions, run as sim_run
+    opts = SimulateOptions(
+        backend=args.backend,
+        midi_port=args.midi_port,
+        osc_host=args.osc_host,
+        osc_port=args.osc_port,
+        send_rate_hz=args.rate,
+        duration_s=args.duration,
+        viz=args.viz,
+        viz_host=args.viz_host,
+        viz_port=args.viz_port,
+        viz_prompt_source=args.viz_prompt_source,
+    )
+    return sim_run(opts)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="muse2-music",
@@ -162,6 +184,90 @@ def build_parser() -> argparse.ArgumentParser:
         "list-midi", help="List available MIDI output ports (for IAC setup checks)"
     )
     pl.set_defaults(func=_cmd_list_midi)
+
+    pm = sub.add_parser(
+        "monitor-midi",
+        help="Live-display MIDI input on a port (sanity-check IAC bus without Logic open)",
+    )
+    pm.add_argument(
+        "--midi-port",
+        default=config.MIDI_PORT_NAME,
+        dest="midi_port",
+        help=f"MIDI input port name (default: {config.MIDI_PORT_NAME!r})",
+    )
+    pm.set_defaults(func=_cmd_monitor_midi)
+
+    ps = sub.add_parser(
+        "simulate",
+        help=(
+            "Synthesize a brain (sine sweeps + periodic triggers) through the real "
+            "mapping/output pipeline. Headset-free testing of MIDI/OSC/viz paths."
+        ),
+    )
+    ps.add_argument(
+        "--backend",
+        choices=("midi", "osc", "both"),
+        default=config.OUTPUT_BACKEND,
+        help=f"Output backend (default: {config.OUTPUT_BACKEND})",
+    )
+    ps.add_argument(
+        "--midi-port",
+        default=config.MIDI_PORT_NAME,
+        dest="midi_port",
+        help=f"MIDI output port name (default: {config.MIDI_PORT_NAME!r})",
+    )
+    ps.add_argument(
+        "--osc-host",
+        default=config.OSC_HOST,
+        dest="osc_host",
+        help=f"DAW-side OSC host (default: {config.OSC_HOST})",
+    )
+    ps.add_argument(
+        "--osc-port",
+        type=int,
+        default=config.OSC_PORT,
+        dest="osc_port",
+        help=f"DAW-side OSC port (default: {config.OSC_PORT})",
+    )
+    ps.add_argument(
+        "--rate",
+        type=float,
+        default=config.SEND_RATE_HZ,
+        help="Output messages per second",
+    )
+    ps.add_argument(
+        "--duration",
+        type=float,
+        default=0.0,
+        help="Stop after N seconds (0 = run until Ctrl-C)",
+    )
+    ps.add_argument(
+        "--viz",
+        action="store_true",
+        default=config.VIZ_ENABLED,
+        help="Also publish /viz/* OSC for the visual layer",
+    )
+    ps.add_argument(
+        "--viz-host",
+        default=config.VIZ_HOST,
+        dest="viz_host",
+        help=f"Viz OSC destination host (default: {config.VIZ_HOST})",
+    )
+    ps.add_argument(
+        "--viz-port",
+        type=int,
+        default=config.VIZ_PORT,
+        dest="viz_port",
+        help=f"Viz OSC destination UDP port (default: {config.VIZ_PORT})",
+    )
+    ps.add_argument(
+        "--viz-prompt-source",
+        choices=("auto", "manual", "mix"),
+        default=config.VIZ_PROMPT_SOURCE_DEFAULT,
+        dest="viz_prompt_source",
+        help=f"Initial sidecar prompt source (default: {config.VIZ_PROMPT_SOURCE_DEFAULT})",
+    )
+    ps.set_defaults(func=_cmd_simulate)
 
     return p
 
