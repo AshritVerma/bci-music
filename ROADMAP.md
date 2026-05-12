@@ -140,6 +140,120 @@ These need the headset and a real session. None block anything else.
 
 ---
 
+## Section H — Vibe / genre conditioning (proposal, design-only)
+
+**Problem.** Today the system reacts to brain state, but has no concept of *genre*, *aesthetic*, or *artist vibe*. We want a top-level tunable: type "Daft Punk x Fred again.. concert vibe" and have it condition both the **visuals** (prompts, color, motion) and the **audio** (sound selection, MIDI feel, possibly real-time generation).
+
+The key design decision is *how deep* vibe conditioning goes. Below are seven candidate approaches grouped by what they touch. They're meant to **layer**, not compete — the eventual system will likely mix several.
+
+### H.1 — Visual-side vibe (cheapest, most immediate value)
+
+- [ ] **H1a.** Vibe = swap the `--prompts` YAML at runtime *(CODE · 1 hr)*
+  - Pre-curate `viz/prompts/daft_punk.yaml`, `viz/prompts/fred_again.yaml`, etc., each with `banks` + `style_default` + `negative_prompt` matched to the vibe
+  - New OSC: `/viz/prompt/preset <name>` → sidecar reloads YAML
+  - Lowest-effort win. Already 90% supported by existing architecture
+- [ ] **H1b.** Vibe = a global suffix appended to every prompt *(CODE · 30 min)*
+  - New OSC: `/viz/prompt/vibe "Daft Punk concert, disco neon, retrofuturism"`
+  - Sidecar's `PromptBuilder.build()` appends it after the bank text + style
+  - Cleaner than full YAML swap when you want to *modulate* an existing scene rather than replace it
+- [ ] **H1c.** Vibe-conditioned procedural layer in TD *(GUI · 1 hr)*
+  - Vibe preset also sets TD parameters: feedback strength, displacement amount, color grade LUT, BPM-locked strobe rate
+  - The "look" includes more than the diffusion prompt — TD's compositing is half the visual identity
+
+### H.2 — Audio-side vibe (the hard part — multiple paths)
+
+The project does **not currently generate audio**. We produce MIDI CCs that drive plugins inside Logic Pro. So "audio vibe" splits into two very different families:
+
+**Family A — Curated, no audio generation (tractable, ships fast):**
+
+- [ ] **H2a.** Vibe = a Logic project template *(GUI+DOCS · 2 hr per vibe)*
+  - Per vibe: a saved `.logicx` with the right plugin chain, presets, sample library, BPM, key
+  - Switching vibes = opening a different project. Coarse but real
+- [ ] **H2b.** Vibe = a sample/loop library + Sampler plugin patch *(CODE+GUI · 3–4 hr)*
+  - Curate a per-vibe folder of one-shots, drum kits, tonal loops
+  - Use a Sampler instance loaded with vibe-appropriate samples; brain triggers play those samples
+  - Switching vibes = swapping the loaded folder
+- [ ] **H2c.** Vibe-aware mapping recipe *(CODE · 2–3 hr)*
+  - Today `mapping.py` is one fixed dict. Refactor to support named presets:
+    - `daft_punk` → `blink → CC 64 (filter cutoff resonance kick)`, `jaw → CC 65 (vocoder freeze)`
+    - `ambient` → `blink → CC 64 (reverb wash)`, `jaw → CC 65 (delay feedback runaway)`
+  - New CLI flag `--mapping-preset daft_punk`; new files `src/muse2_music_lab/mappings/*.py`
+  - Same brain gestures FEEL different per vibe
+
+**Family B — Real-time AI audio generation (ambitious, high risk):**
+
+- [ ] **H2d.** RESEARCH: best small/streaming music model for M4 Max in 2026 *(RESEARCH · 4–8 hr)*
+  - Candidates: MusicGen-stereo small (300M params, ~real-time on M-series), MAGNeT (Meta's faster successor, parallel decoding), Stable Audio Open 1.0 (best quality, 12s clips not streaming), Riffusion (older, image-of-spectrogram, fast-ish)
+  - Decision criteria: latency under ~500ms, can be conditioned on a text vibe, runs on MPS or via CoreML
+- [ ] **H2e.** Loop pre-generation pipeline *(CODE · 1–2 days)*
+  - Realistic compromise: don't generate live, generate a *library* offline conditioned on vibe
+  - Per vibe: a script generates 50 × 8-bar loops at the target BPM/key using H2d's chosen model
+  - Loops written to disk; loaded by Logic Sampler at session start
+  - Brain state selects/morphs between loops in real time (basically AI-curated sample triggering)
+- [ ] **H2f.** True real-time audio sidecar *(CODE · 3–5 days)*
+  - Mirror the visual sidecar architecture: `viz/audio_sidecar/` package
+  - Listens on OSC for vibe + brain params, generates audio in chunks, streams via JACK / BlackHole / virtual audio device into Logic
+  - Highest risk (latency, audio glitching, M-series memory pressure with both diffusion AND audio gen running) but highest novelty payoff
+- [ ] **H2g.** Hybrid: stems + brain-driven mix *(CODE · 2–3 days)*
+  - Pre-generate vibe-conditioned stems (drums / bass / pads / fx) offline
+  - Brain state controls a real-time mix matrix (focus → bass volume, calm → pad swell, etc.)
+  - Most live-feeling without true realtime generation. A lot of live electronic shows do something like this already
+
+### H.3 — Unified vibe parsing (the glue layer)
+
+- [ ] **H3a.** LLM-driven vibe → assets dispatch *(CODE+RESEARCH · 1–2 days)*
+  - User types: `"Daft Punk x Fred again.. concert, peak time, sweaty"`
+  - Local LLM (Llama 3 8B via MLX, or via Ollama) produces structured output:
+    ```json
+    {
+      "viz_prompts": {...full prompt bank YAML...},
+      "viz_global_suffix": "retrofuturist disco, vocoder synths, neon",
+      "td_params": {"feedback": 0.7, "strobe_bpm": 124},
+      "mapping_preset": "house_filter_dance",
+      "audio_template": "house_124bpm_amaj",
+      "bpm": 124, "key": "A minor"
+    }
+    ```
+  - One vibe input fans out to every layer (visual, MIDI, Logic template, audio gen) in a single command
+- [ ] **H3b.** "Vibe history" — keep the last 10 vibes selected, allow blending *(CODE · 1 hr)*
+  - `/viz/prompt/vibe_blend 0.6 daft_punk 0.4 fred_again` for cross-fading between two vibes mid-set
+- [ ] **H3c.** Vibe presets shareable as JSON files *(CODE+DOCS · 2 hr)*
+  - `viz/vibes/daft_punk.json` checked into git
+  - Community could contribute vibe presets without touching code
+
+### H.4 — Recommended phased rollout (do not start until Section A is done)
+
+```
+Phase H-α  (~3 hr, ships immediately useful vibe knob)
+  H1a + H1b + H2c
+  → "vibe" string changes prompts AND mapping. No new audio.
+
+Phase H-β  (~1–2 days, full curated stack with no AI audio)
+  + H1c + H2a + H2b + H3c
+  → Logic template + sample library + TD params per vibe.
+    Still no audio gen — leans on Logic + presets.
+    Realistic, gig-ready.
+
+Phase H-γ  (~3–5 days, ambitious, real-time AI audio)
+  + H2d + (H2e or H2f or H2g)
+  → Real generative audio. Pick exactly one of e/f/g based on H2d's research.
+    H2g (hybrid stems + brain mix) is likely the best risk/reward.
+
+Phase H-δ  (~2 days, glue + polish)
+  + H3a + H3b
+  → Type a vibe in plain English, watch every layer adapt.
+    LLM does the asset selection/conditioning fan-out.
+```
+
+### Open design questions
+
+- **Tempo sync.** Most music vibes are tempo-locked. Does the visual layer also lock to BPM? (Strobe, cuts, displacement on beat.) If yes, BPM becomes another OSC channel published by either Logic or a tap-tempo input.
+- **Brain vs vibe weighting.** When a vibe is set, does the brain still fully drive the visuals, or does the vibe constrain the *space* the brain modulates within? Probably the latter — vibe sets the bounds, brain wiggles inside them.
+- **Cross-modal coherence.** How do we ensure the visual vibe matches the audio vibe? Easiest answer: both are conditioned on the *same vibe string*, so they're coherent by construction (no extra logic).
+- **Latency budget.** If we add real-time audio gen, the overall pipeline (BLE → features → MIDI → Logic + audio sidecar → BlackHole → speakers) needs to stay under ~50ms total to feel alive. Today the visual side is fine at 7 fps; audio has a much tighter latency requirement.
+
+---
+
 ## Recommended next-session paths
 
 Pick one based on time available:
@@ -161,6 +275,15 @@ Pick one based on time available:
 ### Multi-day — Phase 3 caption loop
 - D1 → D2 → D3 → D4 → D5
 - Highest novelty, highest risk. Don't start until A is fully done
+
+### Half-day — Phase 1 + first vibe knob (Phase H-α)
+- All of A, then H1a → H1b → H2c
+- End state: type a vibe string, watch the prompts AND mapping adapt; no audio generation yet
+- Highest leverage "make it feel like a real instrument" upgrade after A is shipped
+
+### Multi-day — full vibe stack with curated audio (Phase H-β)
+- All of A + H, through Phase H-β
+- End state: per-vibe Logic template + sample library + visual prompts; one selector swaps the entire performance identity
 
 ---
 
