@@ -121,6 +121,25 @@ The brain-music coupling at the new sensitivity:
 The seed image evolves every ~24 s based on cumulative drift; you
 should see ~2-3 evolutions in a 60-90 s segment.
 
+### Changing the prompt mid-set
+
+You can pivot to a totally different vibe without restarting:
+
+- [ ] **Click the prompt at the top** of the header. It swaps to an
+      inline editor.
+- [ ] Type the new prompt + Enter. A pulsing badge appears next to
+      the prompt: `→ <new prompt> (NN%)` and counts up over ~16 s
+      while Lyria crossfades from the old prompt to the new one.
+- [ ] Audience sees the visual texture follow within ~24 s when the
+      next seed-image evolution lands.
+- [ ] Need to redirect mid-crossfade? Just click + Enter again with
+      the new prompt — latest-wins, the ramp restarts.
+- [ ] Escape (or click outside) cancels back to display mode without
+      sending anything.
+- [ ] Try the same demo-tested prompts as the Start panel so you
+      don't waste an audience moment debugging a prompt the model
+      doesn't handle well.
+
 ## Recovery moves (if something breaks live)
 
 - **No audio, banner stuck on "warming up"**: a Lyria session has
@@ -145,6 +164,12 @@ should see ~2-3 evolutions in a 60-90 s segment.
   over the canvas means a shader compile error or the seed image
   failed to load. Refresh the page (`Cmd+R`); the WS auto-reconnects
   to the live server without disrupting Lyria.
+
+- **Prompt-change badge stuck at 100%, no audible transition**: the
+  ramp completed but Lyria hasn't rendered the new prompt audibly
+  yet (the model needs a beat or two to incorporate). Wait ~5 s; if
+  still nothing, the change DID land in `state.prompt` (visible in
+  the diagnostic HUD with `h`) — just give the model another bar.
 
 - **Process won't quit cleanly**: Ctrl-C usually works in <3 s. If
   it hangs, second Ctrl-C escalates. Worst case:

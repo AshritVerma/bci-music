@@ -93,6 +93,13 @@ What happens:
 Browser controls (always available):
 
 - **Start** — begins the Lyria session and seed image generation
+- **Click the prompt at the top** — change the prompt mid-session
+  without restarting. Type a new prompt + Enter; Lyria crossfades
+  to it over ~16 s by ramping a `set_weighted_prompts` blend from
+  `(old=1.0, new=0.0)` to `(old=0.0, new=1.0)`. A pulsing badge
+  next to the prompt shows live `→ <new prompt> (NN%)` progress.
+  Type a second prompt mid-crossfade to redirect (latest-wins).
+  Escape (or click away) cancels back to display mode.
 - **Recalibrate** — rebaselines the EEG normalizer in place
 - **Quit** — stops every task and exits the Python process cleanly
 - **EEG: real / simulated** — hot-swap between the headset and the
