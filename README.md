@@ -138,6 +138,72 @@ muse2 battery            # one-shot Muse 2 charge level
 muse2 bt-reset           # clear stuck BLE connections after a crash
 ```
 
+## Cloud demo (Railway)
+
+The full pipeline can't run in the cloud — a hosted container has no
+Bluetooth radio for the Muse 2 and no speakers for `sounddevice`. But
+the pipeline minus those two has a real use: a **shared public demo**
+where the visitor's brain is replaced by the synthetic generator,
+Lyria still streams real music, and the audio is shipped to every
+connected browser as binary WebSocket frames so visitors hear it
+through their own speakers.
+
+That's what `--cloud` mode is. One process, one Lyria session, many
+browser viewers, all hearing/seeing the same stream:
+
+```bash
+muse2 perform --cloud
+# Same as: --simulate-eeg --no-browser --no-tui, plus:
+#   * binds the server to 0.0.0.0
+#   * skips sounddevice; fans Lyria PCM to browsers via WS binary frames
+#   * locks Quit + EEG-mode toggle (no single visitor can break it for others)
+#   * adds a "click anywhere to enable sound" overlay on connect
+#     (browser autoplay policy)
+```
+
+### Deploy to Railway
+
+The repo ships a `Dockerfile` + `railway.json`. From the Railway
+dashboard:
+
+1. **New Project → Deploy from GitHub repo** → pick
+   `AshritVerma/brain-music`.
+2. Add environment variables under **Variables**:
+   - `GEMINI_API_KEY` — required (Lyria + Imagen)
+   - `ANTHROPIC_API_KEY` — optional (prompt-guard + seed-evolver)
+3. Hit **Deploy**. Railway picks up `railway.json` + `Dockerfile`
+   automatically. The container reads `$PORT` from the platform and
+   binds the aiohttp server to it.
+4. **Settings → Networking → Generate Domain**, open the URL,
+   click anywhere to enable sound, type a prompt, hit Start.
+
+The healthcheck path is `/health` and returns a small JSON body
+indicating uptime + Lyria activity. Restart-on-failure is configured
+with a 5-retry cap.
+
+### Cost reality check
+
+`--cloud` runs Lyria continuously after the first visitor clicks Start,
+billed per second. The seed evolver (Imagen 4 Fast) also runs
+periodically. Three controls if you care about cost:
+
+- Set `--evolve-chunks 0` in `railway.json`'s `startCommand` to skip
+  the evolver entirely (just keep the initial seed image).
+- Or stop the Railway service when you're not actively demoing.
+- The Lyria session ends only when the orchestrator exits (SIGTERM
+  from Railway = graceful shutdown).
+
+### Local container smoke test
+
+```bash
+docker build -t brain-music .
+docker run --rm -p 8000:8000 \
+  -e GEMINI_API_KEY=$GEMINI_API_KEY \
+  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+  brain-music
+# Open http://localhost:8000/, click to enable sound, type a prompt.
+```
+
 ## Signal mapping
 
 Every normalized EEG / audio feature is in `[0, 1]` and feeds both the
@@ -205,6 +271,7 @@ src/muse2_music_lab/
 
   server/
     app.py             # aiohttp HTTP/WS server + browser action router
+    audio_broadcast.py # cloud-mode binary-WS Lyria audio fan-out
 
   visuals/
     seed_image.py      # Imagen 4 Fast seed generation + cache
@@ -215,9 +282,14 @@ static/
   style.css            # dark UI styling
   app.js               # WebSocket client + UI controls + seed cross-fade
   visualizer.js        # Three.js + GLSL multi-regime shader
+  audio.js             # cloud-mode Web Audio jitter-buffered playback
 
 scripts/
   lyria_smoke.py       # standalone Lyria RealTime API test
+
+Dockerfile             # container image for Railway / any PaaS
+railway.json           # Railway build/deploy config (healthcheck etc.)
+.dockerignore          # keeps the build context lean
 ```
 
 ## Troubleshooting
