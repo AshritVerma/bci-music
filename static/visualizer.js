@@ -12,9 +12,9 @@
 //
 // Uniform mapping (each is 0..1 from the EEG/audio pipeline):
 //   uAlpha     relaxation   -> blur radius + softness
-//   uBeta      focus        -> contrast + edge sharpness boost
-//   uTheta     dreaminess   -> swirl warp amount + rotation speed
-//   uRMS       loudness     -> radial zoom-pulse + brightness
+//   uBeta      focus        -> contrast + kaleidoscope segment count
+//   uTheta     dreaminess   -> tunnel twist + kaleido drift
+//   uRMS       loudness     -> radial zoom-pulse + brightness + ripple energy
 //   uCentroid  spectral hue -> color-temperature shift (cool<->warm)
 //   uOnset     transients   -> brief chromatic-aberration kick
 //
@@ -22,6 +22,12 @@
 //   uAsymmetry valence (0..1, 0.5=neutral) -> color tilt L/R
 //   uBlink     short pulse (1 frame on trigger) -> screen flash
 //   uJaw       short pulse                       -> radial shockwave
+//
+// Visual regime system (Phase 10.2): the JS side picks one of FOUR
+// visual regimes -- calm / tunnel / kaleidoscope / ripple -- and blends
+// to it over ~3s. Picks a new (different) regime every 15-30s. This
+// kills the headache-inducing constant rotation of the original
+// single-warp shader and gives the visual genuine variety.
 //
 // Why ES-module Three from CDN:
 //   No build step. Browsers fetch from `unpkg.com` once and cache.
@@ -79,6 +85,21 @@ const FRAG = /* glsl */ `
   uniform float uBlink;        // 0..1 envelope (decays each frame in JS)
   uniform float uJaw;          // 0..1 envelope (decays each frame in JS)
 
+  // Regime weights (Phase 10.2). JS keeps the sum near 1 and smoothly
+  // ramps one to ~1 while ramping the others toward 0 every 15-30s.
+  // The shader normalizes by their sum to keep the output stable
+  // during transitions even if they briefly drift.
+  uniform float uModeCalm;     // gentle drift; image stays mostly stable
+  uniform float uModeTunnel;   // log-spiral zoom into infinity
+  uniform float uModeKaleido;  // angular fold into N mirror segments
+  uniform float uModeRipple;   // concentric water-like waves
+
+  // Always-on auto effects (driven by JS LFOs, not WS data). Without
+  // them the visual would be stationary at neutral EEG/audio. With
+  // them the colors and zoom are always alive even pre-Start.
+  uniform float uHueCycle;     // accumulated hue shift in radians
+  uniform float uZoomLfo;      // -0.5..0.5 slow zoom-breath signal
+
   // ---- helpers ----
 
   // Cover-fit: scale the texture to fully cover the screen regardless
@@ -135,6 +156,72 @@ const FRAG = /* glsl */ `
     return col * c + cross(k, col) * sin(shift) + k * dot(k, col) * (1.0 - c);
   }
 
+  // ---- regime warps ------------------------------------------------
+  //
+  // Each takes a normalized [0,1] screen-UV and returns a warped UV.
+  // None of them rotate continuously; the original constant
+  // angle += uTime * uTheta line was the headache and is gone.
+  //
+  // The four are independent enough that blending UVs between them
+  // during a regime change reads as a smooth morph rather than a
+  // crossfade through a glitch.
+
+  const float PI = 3.14159265359;
+
+  // CALM: tiny perlin-ish drift. Image looks mostly stable.
+  vec2 warpCalm(vec2 uv) {
+    vec2 to = uv - 0.5;
+    float drift = 0.005 + 0.008 * uAlpha;
+    return uv + vec2(
+      sin(uTime * 0.31 + to.y * 4.0),
+      cos(uTime * 0.27 + to.x * 4.0)
+    ) * drift;
+  }
+
+  // TUNNEL: log-spiral zoom feel. The image looks like it's receding
+  // into / approaching from infinity. Theta adds a gentle twist
+  // proportional to depth -- a swirl that breathes WITH the zoom
+  // instead of fighting it.
+  vec2 warpTunnel(vec2 uv) {
+    vec2 to = uv - 0.5;
+    float r  = length(to) + 1e-6;
+    float a  = atan(to.y, to.x);
+    // Depth signal: combines a slow autonomous tunnel-rate, RMS
+    // pump, and the uZoomLfo so the perceived speed varies.
+    float depth = uTime * 0.18 + uRMS * 0.55 + uZoomLfo * 0.6;
+    // Log-radial perturbation creates the "rings receding" illusion.
+    float r2 = r * (0.85 + 0.32 * sin(log(r * 6.0 + 0.5) * 3.2 - depth * 2.0));
+    a += depth * 0.18 * (uTheta + 0.2);
+    return 0.5 + vec2(cos(a), sin(a)) * r2;
+  }
+
+  // KALEIDOSCOPE: fold the angular coordinate into N mirror segments.
+  // Beta picks the segment count (6..12) so a focused mind shatters
+  // the image more than a relaxed one.
+  vec2 warpKaleido(vec2 uv) {
+    vec2 to = uv - 0.5;
+    float r  = length(to);
+    float a  = atan(to.y, to.x);
+    float segments = 6.0 + floor(uBeta * 6.0);
+    float seg = 2.0 * PI / segments;
+    // Slow drift inside the segment so the kaleido pattern isn't
+    // perfectly static, but well below the original constant-rotation rate.
+    a = mod(a + uTime * 0.04 * (uTheta * 0.6 + 0.3), seg);
+    a = abs(a - seg * 0.5);
+    return 0.5 + vec2(cos(a), sin(a)) * r;
+  }
+
+  // RIPPLE: two layered concentric sine waves emanating from center.
+  // Looks like ripples on water. Loudness pumps the amplitude.
+  vec2 warpRipple(vec2 uv) {
+    vec2 to = uv - 0.5;
+    float r  = length(to) + 1e-6;
+    float w1 = sin(r * 26.0 - uTime * 3.0)  * 0.022;
+    float w2 = sin(r * 11.0 - uTime * 1.4)  * 0.014;
+    float disp = (w1 + w2) * (0.6 + uRMS * 1.2);
+    return uv + (to / r) * disp;
+  }
+
   void main() {
     // Work in normalized [0,1] screen-UV space. Per-texture cover-fit
     // happens inside sampleSeed() so A and B can have different aspect
@@ -142,42 +229,56 @@ const FRAG = /* glsl */ `
     vec2 uv = vUv;
     vec2 toCenter = uv - 0.5;
     float dist = length(toCenter);
-    float angle = atan(toCenter.y, toCenter.x);
 
-    // ---- THETA: swirl warp + slow rotation ----
-    // Rotation speed scales with theta. Distant pixels rotate more
-    // (rate ~ dist) so the image "drips" outward when theta is high.
-    float swirl = uTheta * (0.6 + 1.2 * sin(uTime * 0.25));
-    angle += swirl * dist * 1.5 + uTime * 0.05 * uTheta;
+    // ---- regime UV blend ----
+    // Compute each regime's warped UV and weight-blend them. JS keeps
+    // the weights near a partition of unity (one mode ~1, the others
+    // ~0) but during the 3s transitions all four can be active. We
+    // normalize by the sum so a momentary undershoot doesn't darken
+    // the image (and an overshoot doesn't push UVs off-screen).
+    vec2 uvCalm    = warpCalm(uv);
+    vec2 uvTunnel  = warpTunnel(uv);
+    vec2 uvKaleido = warpKaleido(uv);
+    vec2 uvRipple  = warpRipple(uv);
+    float wSum = uModeCalm + uModeTunnel + uModeKaleido + uModeRipple + 1e-6;
+    vec2 warpedUv = (
+        uvCalm    * uModeCalm
+      + uvTunnel  * uModeTunnel
+      + uvKaleido * uModeKaleido
+      + uvRipple  * uModeRipple
+    ) / wSum;
 
-    // ---- RMS: pulse zoom (in/out with loudness) ----
-    // Subtle by default; uRMS=1.0 gives ~10% breathing.
-    float zoom = 1.0 - 0.10 * uRMS;
-    float radius = dist * zoom;
+    // ---- always-on global zoom breathing ----
+    // Independent of any regime. A gentle ~3% zoom oscillation tied
+    // to RMS keeps the image alive when nothing else is moving.
+    vec2 zoomVec = warpedUv - 0.5;
+    float zoomDelta = 1.0 + 0.06 * uRMS * sin(uTime * 2.4) + 0.03 * uZoomLfo;
+    warpedUv = 0.5 + zoomVec / zoomDelta;
 
-    // ---- JAW: brief radial shockwave (envelope-driven, decays in JS) ----
-    radius += uJaw * 0.04 * sin(dist * 30.0 - uTime * 6.0);
-
-    vec2 warpedUv = 0.5 + vec2(cos(angle), sin(angle)) * radius;
+    // ---- JAW: brief radial shockwave (envelope-driven) ----
+    warpedUv += (toCenter / max(dist, 1e-6))
+              * uJaw * 0.045 * sin(dist * 30.0 - uTime * 6.0);
 
     // ---- ALPHA: blur amount (relaxation = soft) ----
-    float blurR = uAlpha * 5.0 + 0.01;  // 0.01 so the +0 case still uses the kernel-cost-neutral path
+    float blurR = uAlpha * 5.0 + 0.01;
 
     // ---- ONSET: chromatic aberration along radial direction ----
-    vec2 abDir = normalize(toCenter + 1e-6) * uOnset * 0.012;
+    vec2 abDir = (toCenter / max(dist, 1e-6)) * uOnset * 0.014;
     vec3 colR = sampleSeed(warpedUv + abDir, blurR);
     vec3 colG = sampleSeed(warpedUv,         blurR);
     vec3 colB = sampleSeed(warpedUv - abDir, blurR);
     vec3 col = vec3(colR.r, colG.g, colB.b);
 
     // ---- BETA: contrast / mid-emphasis ----
-    // Pulls colors away from grey when high; flat looks when low.
     float contrast = 0.7 + uBeta * 0.8;
     col = (col - 0.5) * contrast + 0.5;
 
-    // ---- CENTROID: hue shift, with asymmetry as a modulator ----
-    // Centroid 0.5 = no shift. <0.5 cools (toward blue), >0.5 warms (toward orange).
-    float hue = (uCentroid - 0.5) * 2.0 + (uAsymmetry - 0.5) * 0.6;
+    // ---- HUE: centroid + asymmetry + slow auto-cycle ----
+    // Auto-cycle (uHueCycle) accumulates ~1 full rotation per ~60s
+    // so colors are always trippy-shifting even at neutral EEG.
+    float hue = (uCentroid - 0.5) * 2.0
+              + (uAsymmetry - 0.5) * 0.6
+              + uHueCycle;
     col = hueShift(col, hue);
 
     // ---- RMS: brightness (subtle baseline + loud lift) ----
@@ -195,6 +296,17 @@ const FRAG = /* glsl */ `
 `;
 
 // ---- module-scope visualizer state -----------------------------------
+
+// Visual regime names. Order matters only for log readability.
+const REGIMES = ["calm", "tunnel", "kaleido", "ripple"];
+
+// Regime cycling parameters. Picked deliberately:
+//   - 15s minimum so the user has time to recognize what mode it's in
+//   - 30s maximum so things feel alive and don't get stale
+//   - 3s blend so transitions read as a smooth morph, not a cut
+const REGIME_MIN_S = 15.0;
+const REGIME_MAX_S = 30.0;
+const REGIME_BLEND_S = 3.0;
 
 const state = {
   initialized: false,
@@ -215,6 +327,21 @@ const state = {
   // thread for a visible-but-not-strobing flash.
   blinkEnv: 0.0,
   jawEnv: 0.0,
+  // Visual regime weights. `modes` is the live (smoothed) weight per
+  // regime; `modeTargets` is what the scheduler wrote (always a
+  // partition of unity -- exactly one regime is 1, the rest 0). The
+  // render loop low-passes modes toward modeTargets at REGIME_BLEND_S.
+  modes:        { calm: 1.0, tunnel: 0.0, kaleido: 0.0, ripple: 0.0 },
+  modeTargets:  { calm: 1.0, tunnel: 0.0, kaleido: 0.0, ripple: 0.0 },
+  currentRegime: "calm",
+  // performance.now() timestamp of the next scheduled regime change.
+  // Initial value is filled in by init() so we get the first random
+  // change ~20s after boot, not 20s after page-load epoch.
+  nextRegimeAt: 0,
+  // Slow autonomous LFOs that drive the visual even when EEG/audio
+  // are flat. uHueCycle accumulates radians; uZoomLfo is a windowed
+  // sinusoid sampled each frame.
+  hueCycle: 0.0,
   // Cross-fade state for Phase 10 evolver. crossfadeStart=0 means no
   // cross-fade in progress (uSeedMix stays at 0 -> only uSeedA shown).
   // crossfadeDur is set on each refreshSeed() so it's tunable from
@@ -227,6 +354,14 @@ const state = {
   startTime: performance.now(),
   lastFrameTime: performance.now(),
 };
+
+// Pick a regime that's NOT the current one. Symmetric random choice
+// over the other three. Returning the same regime would skip the
+// visible transition, defeating the point of the cycle.
+function pickNextRegime(current) {
+  const others = REGIMES.filter((r) => r !== current);
+  return others[Math.floor(Math.random() * others.length)];
+}
 
 // Smoothing factor per second. 8.0 == ~125ms time-constant.
 // Higher = snappier, lower = smoother. 8 feels right for ~10 Hz WS feed
@@ -392,7 +527,21 @@ async function init(canvas) {
     uAsymmetry:  { value: 0.5 },
     uBlink:      { value: 0.0 },
     uJaw:        { value: 0.0 },
+    // Phase 10.2: regime weights and autonomous LFOs. Default state
+    // is "calm" at 1.0 so the first ~20s look subtle while the user
+    // takes in the seed image; the scheduler then switches to one of
+    // the other three regimes.
+    uModeCalm:    { value: 1.0 },
+    uModeTunnel:  { value: 0.0 },
+    uModeKaleido: { value: 0.0 },
+    uModeRipple:  { value: 0.0 },
+    uHueCycle:    { value: 0.0 },
+    uZoomLfo:     { value: 0.0 },
   };
+
+  // Schedule the first regime change. Bias slightly toward the lower
+  // end so something interesting happens within ~20s of page load.
+  state.nextRegimeAt = performance.now() + (REGIME_MIN_S + Math.random() * 8) * 1000;
 
   const material = new THREE.ShaderMaterial({
     uniforms,
@@ -462,6 +611,36 @@ function renderLoop(now) {
   state.jawEnv   *= decay;
   u.uBlink.value = state.blinkEnv;
   u.uJaw.value   = state.jawEnv;
+
+  // ---- regime scheduler (Phase 10.2) ----
+  // Periodically swap to a new dominant regime. The targets snap to
+  // a partition of unity (one mode = 1, others = 0); the smoothing
+  // pass below glides the live weights over REGIME_BLEND_S seconds.
+  if (now >= state.nextRegimeAt) {
+    const next = pickNextRegime(state.currentRegime);
+    state.currentRegime = next;
+    for (const r of REGIMES) state.modeTargets[r] = (r === next) ? 1.0 : 0.0;
+    const dur = REGIME_MIN_S + Math.random() * (REGIME_MAX_S - REGIME_MIN_S);
+    state.nextRegimeAt = now + dur * 1000;
+    console.log(`[viz] regime -> ${next} (next change in ${dur.toFixed(1)}s)`);
+  }
+  // Mode-weight smoothing. The time-constant equals REGIME_BLEND_S so
+  // a target hop produces a ~3s morph regardless of frame rate.
+  const modeK = 1 - Math.exp(-(1.0 / REGIME_BLEND_S) * dt);
+  for (const r of REGIMES) {
+    state.modes[r] += (state.modeTargets[r] - state.modes[r]) * modeK;
+  }
+  u.uModeCalm.value    = state.modes.calm;
+  u.uModeTunnel.value  = state.modes.tunnel;
+  u.uModeKaleido.value = state.modes.kaleido;
+  u.uModeRipple.value  = state.modes.ripple;
+
+  // Autonomous LFOs that animate the visual even when EEG/audio are
+  // pinned. Hue advances ~one full rotation per ~63s; zoom-LFO is a
+  // slow sinusoid in [-0.5, 0.5] that adds ~3% to the global zoom.
+  state.hueCycle += dt * 0.10;
+  u.uHueCycle.value = state.hueCycle;
+  u.uZoomLfo.value  = 0.5 * Math.sin(((now - state.startTime) / 1000) * 0.13);
 
   // Cross-fade animation. crossfadeStart > 0 means a fade is in
   // progress; tween uSeedMix from 0 -> 1 over crossfadeDur, then
