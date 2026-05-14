@@ -16,10 +16,266 @@ from brainflow.board_shim import BoardIds
 BOARD_ID: int = BoardIds.MUSE_2_BOARD.value
 
 WINDOW_SIZE: int = 256              # samples per feature computation (~1 s at 256 Hz)
-SEND_RATE_HZ: float = 30.0          # output messages per second
+SEND_RATE_HZ: float = 30.0          # TUI refresh rate
 CALIBRATION_DURATION: float = 8.0   # seconds of baseline on startup
 
+# `perform` pipeline cadence: BrainFlow loop pumps features into AppState
+# every PERFORM_TICK_S seconds and sets state.eeg_tick. Each tick is one
+# Lyria control push (Phase 5) and one AppState refresh for the WS
+# broadcaster (Phase 7). Decoupled from the TUI's SEND_RATE_HZ.
+PERFORM_TICK_S: float = 0.25        # 4 Hz
+PERFORM_LOG_PERIOD_S: float = 2.0   # how often _state_logger prints in main.py
+
 BOARD_PREPARE_TIMEOUT_S: float = 15.0
+
+
+# ---------------------------------------------------------------------------
+# BLE teardown / reconnect hygiene (Phase 4 hardening)
+# ---------------------------------------------------------------------------
+#
+# Background: the Muse 2 + macOS CoreBluetooth combo leaves stale peripheral
+# state behind after a teardown if we don't pace it carefully. The next
+# `prepare_session` then has to fight a half-disconnected handle, which
+# manifests as the slow-connect-then-drop pattern (Found device -> 5s
+# silence -> Peripheral Connection failed -> Connected late -> link rots).
+# Power-cycling the headset works around it but is hostile to iteration.
+#
+# These two sleeps in Board.stop() give the headset and CoreBluetooth time
+# to fully settle before the process exits, so the *next* connect starts
+# from a clean slate.
+
+# Pause between stop_stream() and release_session(). Lets the headset
+# actually process the streaming-halt command before we yank the BLE link.
+BOARD_TEARDOWN_HALT_PAUSE_S: float = 0.3
+
+# Pause after release_session() returns, before stop() yields. Lets
+# CoreBluetooth's async disconnect notification flush so the next
+# `prepare_session` (this process or a freshly spawned one) doesn't get
+# handed a stale peripheral handle.
+BOARD_TEARDOWN_FLUSH_S: float = 2.0
+
+
+# Reconnect supervisor in run_real_eeg_loop: when the BLE link drops
+# mid-session (ConnectionError from get_window or BrainFlowError on
+# re-prepare), tear down the Board and try to bring it back without
+# losing the user's calibration baseline. After this many CONSECUTIVE
+# failures (a successful tick resets the counter), give up and let the
+# orchestrator shut everything down cleanly.
+EEG_RECONNECT_MAX_ATTEMPTS: int = 3
+
+# Base backoff between reconnect attempts. The supervisor scales this
+# linearly with the failure count so flapping links don't hammer BLE.
+EEG_RECONNECT_BACKOFF_S: float = 3.0
+
+
+# ---------------------------------------------------------------------------
+# Lyria RealTime (Phase 5)
+# ---------------------------------------------------------------------------
+#
+# These were validated end-to-end by scripts/lyria_smoke.py before the
+# orchestrator wiring landed. Treat them as the canonical numbers; the
+# smoke script and the perform task should always agree.
+
+LYRIA_MODEL_ID: str = "models/lyria-realtime-exp"
+LYRIA_SAMPLE_RATE: int = 48_000
+LYRIA_CHANNELS: int = 2
+LYRIA_DTYPE: str = "int16"             # little-endian signed 16-bit PCM
+LYRIA_MIME_PREFIX: str = "audio/l16"   # whatever the server sends, must start with this
+LYRIA_INITIAL_BUFFER_S: float = 1.0    # pre-roll before audio_play starts draining
+
+# How long the audio queue can grow before the producer blocks. At 48kHz
+# stereo s16 = 192 KB/s, so 64 chunks * ~10KB/chunk = ~3s of audio. Plenty
+# of headroom over network jitter without letting the queue swallow GBs
+# of memory if the consumer hangs.
+LYRIA_AUDIO_QUEUE_MAX: int = 64
+
+# Default Lyria config sent at session start. EEG-driven updates ride on
+# top of this baseline -- so e.g. brightness=0.5 here means "the default
+# is mid-brightness; alpha will modulate it up or down from there".
+LYRIA_DEFAULT_BPM: int = 90
+LYRIA_DEFAULT_DENSITY: float = 0.5
+LYRIA_DEFAULT_BRIGHTNESS: float = 0.5
+LYRIA_DEFAULT_TEMPERATURE: float = 1.1
+
+# EEG -> Lyria mapping ranges. Each AppState feature is in [0, 1], and we
+# map it linearly into the corresponding Lyria parameter range. Tuned to
+# stay inside Lyria's "musical" envelope -- pushed too far on temperature
+# or bpm and the model degenerates into noise / metronome ticks.
+LYRIA_BPM_MIN: int = 60                # asymmetry=0 (left-frontal lean)
+LYRIA_BPM_MAX: int = 140               # asymmetry=1 (right-frontal lean)
+LYRIA_TEMPERATURE_MIN: float = 0.6     # theta=0 (alert / drowsy off)
+LYRIA_TEMPERATURE_MAX: float = 1.8     # theta=1 (drowsy / dreamy on)
+
+# How long to wait between reconnect attempts on Lyria session failure.
+# Lyria's WebSocket can drop on transient network blips; we treat a drop
+# the same as the EEG reconnect supervisor -- log, sleep, retry.
+LYRIA_RECONNECT_BACKOFF_S: float = 3.0
+LYRIA_RECONNECT_MAX_ATTEMPTS: int = 3
+
+# How many Claude rewrites to try if Lyria filters the prompt at startup.
+# The prompt-guard module knows how to translate filtered prompts into
+# pure-sonic descriptors. Default 1 = "rewrite once, then surrender".
+LYRIA_MAX_PROMPT_REWRITES: int = 1
+
+
+# ---------------------------------------------------------------------------
+# Audio analysis (Phase 6)
+# ---------------------------------------------------------------------------
+#
+# We tee each Lyria chunk into a second small bounded queue and run a
+# numpy FFT pipeline over it to extract three perceptual features
+# (rms / spectral_centroid / onset_strength). These drive the visualizer
+# in Phase 7+ and animate the "Audio (P6)" section of the perform TUI.
+
+# Hop size in samples (per channel) for one analysis frame. 2400 samples
+# at 48 kHz = 50 ms = ~20 Hz update rate. Smaller = jitterier features
+# but more reactive; larger = smoother but laggy. 50 ms is a sweet spot
+# for visual reactivity without oversampling small noise fluctuations.
+AUDIO_ANALYSIS_HOP_SAMPLES: int = 2400
+
+# Bounded analysis queue. Lossy on overflow: if the FFT can't drain fast
+# enough we drop the OLDEST chunk silently rather than backpressure
+# Lyria. Sized for ~8 chunks (each Lyria chunk is ~96k samples = 2s of
+# audio at 48 kHz stereo s16, so 8 chunks ~= 16s buffer). In practice
+# the FFT runs orders of magnitude faster than real-time, so this only
+# absorbs occasional GC stalls.
+AUDIO_ANALYSIS_QUEUE_MAX: int = 8
+
+# EMA smoothing weight for audio features. Heavier smoothing than EEG
+# (EEG already has its own EMA upstream and runs at 4 Hz; audio runs
+# at ~20 Hz so we need a lower alpha to get a comparable visual response
+# rate). 0.15 = 5-frame effective time constant ~250 ms.
+AUDIO_FEATURE_SMOOTHING: float = 0.15
+
+# Adaptive percentile-baseline normalization. Each feature is normalized
+# against a slow-moving high-water mark so the [0, 1] output adapts to
+# track-level loudness/brightness rather than absolute units. The
+# baseline tracks toward the rolling high quickly when current >
+# baseline, slowly when current < baseline -- matching how a perceptual
+# AGC behaves.
+AUDIO_BASELINE_ATTACK: float = 0.30   # baseline rises fast on louder peaks
+AUDIO_BASELINE_RELEASE: float = 0.005 # baseline falls slow on quiet sections
+
+# Spectral centroid is normalized against the Nyquist frequency. Real
+# music rarely lands above ~6 kHz centroid even at peak brightness, so
+# this cap keeps the [0, 1] output from compressing into the bottom
+# fifth of its range. Values above the cap saturate to 1.0.
+AUDIO_CENTROID_NORM_HZ: float = 6000.0
+
+
+# ---------------------------------------------------------------------------
+# Server / browser visualizer (Phase 7)
+# ---------------------------------------------------------------------------
+
+# Broadcast cadence to all connected WebSocket clients. EEG updates at
+# 4 Hz, audio at ~20 Hz, so 20 Hz is the natural ceiling -- faster
+# would just send duplicate frames. Lower if a future demo runs over
+# Wi-Fi to a remote browser and bandwidth becomes an issue.
+SERVER_BROADCAST_HZ: float = 20.0
+
+# WebSocket path. The browser opens "ws://host:port{SERVER_WS_PATH}".
+# Keep in sync with static/app.js if you change it.
+SERVER_WS_PATH: str = "/ws"
+
+# Where the browser visualizer files live. Directory is served at /static/*
+# and contains index.html + app.js + style.css today; Phase 8 drops
+# seed.png in here too. Path is resolved relative to the repo root.
+SERVER_STATIC_DIR: str = "static"
+
+# How long to wait between server bind and auto-launching Chrome. Small
+# enough to be invisible to the operator, big enough that the listener
+# is definitely accepting before we hand a URL to the browser.
+SERVER_BROWSER_OPEN_DELAY_S: float = 0.25
+
+
+# ---------------------------------------------------------------------------
+# Seed image / Imagen (Phase 8)
+# ---------------------------------------------------------------------------
+#
+# A one-shot text-to-image call at session start. The generated image
+# becomes the visual identity of the session: Phase 9's Three.js shader
+# loads it as the initial texture, and EEG/audio uniforms warp / blur /
+# colorize it from there.
+
+# Imagen model (same google-genai SDK we use for Lyria).
+# imagen-4.0-fast-generate-001 is the lowest-latency Imagen 4 variant
+# available on this API key (verified via client.models.list()): ~3-5s
+# wall time, lower per-image cost than the standard or ultra tiers,
+# zero local model weights to download. Swap to imagen-4.0-generate-001
+# for the standard quality tier or imagen-4.0-ultra-generate-001 for
+# best quality at higher latency / cost.
+SEED_MODEL_ID: str = "imagen-4.0-fast-generate-001"
+
+# Aspect ratio passed to the Imagen API. The shader uniforms work with
+# any ratio, but 16:9 matches a typical full-screen browser window and
+# avoids letterboxing in the visualizer.
+SEED_ASPECT_RATIO: str = "16:9"
+
+# Where the canonical seed image lands. Served at /static/seed.png by
+# the Phase 7 server; gitignored so different prompts don't pollute git.
+SEED_OUTPUT_PATH: str = "static/seed.png"
+
+# Per-prompt cache. Filenames are sha256(prompt + model + ratio)[:16].png.
+# Lets you swap prompts back and forth in dev without paying the API cost
+# every time. Cleared by deleting the directory (or `--no-seed-cache`).
+SEED_CACHE_DIR: str = "static/cache"
+
+
+# ---------------------------------------------------------------------------
+# Seed evolver (Phase 10)
+# ---------------------------------------------------------------------------
+#
+# A background task that periodically regenerates the seed image so the
+# visual evolves with how the brain has been moving. Hybrid mutation:
+# template-based modifiers from EEG/audio drift, polished by Claude into
+# a single coherent prompt, fed to Imagen.
+
+# How often a new image is generated -- expressed in Lyria audio chunks
+# rather than wall-clock seconds. Each chunk is ~2s of music (96k stereo
+# samples at 48 kHz, see audio/fft.py), so the default 12 chunks ≈ 24 s
+# of music between regenerations. Locking the cadence to chunks instead
+# of seconds keeps the visual transitions feeling tied to the music
+# rather than drifting against it. Set to 0 via --evolve-chunks 0 to
+# disable entirely.
+EVOLVE_INTERVAL_CHUNKS: int = 12
+
+# Cost reminder: at 12 chunks (~24s) cadence, ~150 Imagen calls/hour.
+# Roughly $3/hr for imagen-4.0-fast (rates may change). If running long
+# sessions, bump to 24+ chunks.
+
+# Rolling window of recent EEG/audio samples used to compute the drift
+# descriptor. Long enough to smooth out one-second blips, short enough
+# that "trends" reflect what just happened, not the whole session.
+EVOLVE_WINDOW_S: float = 45.0
+
+# How frequently the evolver samples AppState into its rolling window.
+# 2 Hz is plenty -- the drift summary only cares about averages and
+# slopes, not high-frequency detail.
+EVOLVE_SAMPLE_HZ: float = 2.0
+
+# Maximum number of template-generated modifiers to feed into Claude per
+# cycle. Picks the strongest ones by absolute drift magnitude. Too many
+# and Claude can't weave them naturally; too few and the visual barely
+# evolves.
+EVOLVE_MAX_MODIFIERS: int = 4
+
+# Threshold below which a feature trend / mean is considered "neutral"
+# and contributes no modifier. Keeps the prompt from being padded with
+# noise when the brain is just sitting still.
+EVOLVE_NEUTRAL_THRESHOLD: float = 0.10
+
+# Claude model used for the polish step (after template modifiers are
+# generated). Same anthropic SDK as the Lyria prompt-guard, same
+# ANTHROPIC_API_KEY required.
+EVOLVE_CLAUDE_MODEL: str = "claude-opus-4-7"   # match music/prompt_guard.py
+EVOLVE_CLAUDE_MAX_TOKENS: int = 200
+
+# Browser-side crossfade duration when a new seed lands. Long enough to
+# feel smooth, short enough that the new image still feels like a real
+# event. At the default 12-chunk (~24s) cadence, 6s of fade leaves ~18s
+# of "settled" view per cycle. Mirrored in the visualizer.js render
+# loop's `state.crossfadeDur` default.
+EVOLVE_CROSSFADE_S: float = 6.0
 
 
 # ---------------------------------------------------------------------------
@@ -27,38 +283,6 @@ BOARD_PREPARE_TIMEOUT_S: float = 15.0
 # ---------------------------------------------------------------------------
 
 SMOOTHING_ALPHA: float = 0.2        # EMA weight (lower = smoother, more lag)
-
-
-# ---------------------------------------------------------------------------
-# Output backend
-# ---------------------------------------------------------------------------
-
-# One of: "midi", "osc", "both".
-OUTPUT_BACKEND: str = "midi"
-
-MIDI_PORT_NAME: str = "IAC Driver Bus 1"
-MIDI_CHANNEL_DEFAULT: int = 1       # 1-based channel
-
-OSC_HOST: str = "127.0.0.1"
-OSC_PORT: int = 9000
-
-
-# ---------------------------------------------------------------------------
-# Visual layer (/viz/* bus to TouchDesigner + diffusion sidecar)
-# ---------------------------------------------------------------------------
-
-# Enable by default? CLI --viz overrides. When False, no viz OSC is sent.
-VIZ_ENABLED: bool = False
-
-# Separate from the DAW OSC port so the two buses can't collide.
-VIZ_HOST: str = "127.0.0.1"
-VIZ_PORT: int = 9100
-
-# Prompt source toggle for the sidecar. Accepts: "auto" | "manual" | "mix".
-#   auto   - brain-only; sidecar interpolates between prompt banks
-#   manual - uses /viz/prompt/base text, brain modulates diffusion only
-#   mix    - bank interpolation with user text appended as style suffix
-VIZ_PROMPT_SOURCE_DEFAULT: str = "auto"
 
 
 # ---------------------------------------------------------------------------
@@ -88,12 +312,29 @@ BAND_BETA:  tuple[float, float] = (13.0, 30.0)
 # Discrete triggers (tune these to your headset fit and signal quality)
 # ---------------------------------------------------------------------------
 
-BLINK_THRESHOLD_UV: float = 150.0
+# Blink: peak-to-peak on AF7/AF8.
+#   2026-05-13: bumped from ~120 -> 225 (idle PTP was ~60μV).
+#   2026-05-13 evening: still oversaturated; captured blink read 1015μV,
+#     bumped 225 -> 500.
+#   2026-05-13 night: still firing on casual eye movement (1400μV at rest);
+#     bumped 500 -> 1500.
+#   2026-05-13 late: 1500 too insensitive -- ordinary blinks weren't
+#     firing in the browser visualizer, captured at-rest bar was ~7%.
+#     Pulled back to 1000: above the casual eye-movement floor (~700μV)
+#     but below the typical full blink (~1000-1400μV) so a normal blink
+#     fires reliably without ambient eye motion triggering it.
+BLINK_THRESHOLD_UV: float = 1000.0
 BLINK_REFRACTORY_S: float = 0.3
 
 JAW_HP_CUTOFF_HZ: float = 20.0
 # Threshold is peak |HP| averaged across channels.
-# Observed on this headset/fit: rest ~40μV, strong clench 100+μV.
-# 80μV gives ~40μV margin above idle + ~20μV below typical clench peaks.
-JAW_THRESHOLD_UV: float = 80.0
+#   2026-05-13: bumped from 80 -> 160 (idle was ~86μV).
+#   2026-05-13 evening: still oversaturated; captured casual clench was
+#     221μV. Bumped 160 -> 320.
+#   2026-05-13 late: 320 too insensitive -- firm clenches weren't firing
+#     in the browser visualizer (captured at-rest bar 21%, captured fire
+#     was 221μV which sat *below* the 320 threshold). Pulled back to 220:
+#     above the at-rest noise floor (~70-90μV) but at the level a
+#     genuine clench produces, so deliberate jaws fire on demand.
+JAW_THRESHOLD_UV: float = 220.0
 JAW_REFRACTORY_S: float = 0.3
