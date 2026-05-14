@@ -35,7 +35,27 @@ from muse2_music_lab.state import AppState  # noqa: E402
 PORT = 8770
 
 
+def _check_band_sensitivity_math() -> None:
+    """Pure-Python check on the _apply_band_sensitivity formula."""
+    from muse2_music_lab.eeg.brainflow_loop import _apply_band_sensitivity
+
+    # sensitivity = 1.0 -> identity
+    for y in (0.0, 0.25, 0.5, 0.75, 1.0):
+        assert abs(_apply_band_sensitivity(y, 1.0) - y) < 1e-9, y
+    # sensitivity = 0.5 -> compress toward 0.5
+    assert abs(_apply_band_sensitivity(1.0, 0.5) - 0.75) < 1e-9
+    assert abs(_apply_band_sensitivity(0.0, 0.5) - 0.25) < 1e-9
+    assert abs(_apply_band_sensitivity(0.5, 0.5) - 0.5) < 1e-9
+    # sensitivity = 2.0 -> stretch + clip
+    assert _apply_band_sensitivity(0.8, 2.0) == 1.0
+    assert _apply_band_sensitivity(0.2, 2.0) == 0.0
+    assert abs(_apply_band_sensitivity(0.6, 2.0) - 0.7) < 1e-9
+    print("[smoke] _apply_band_sensitivity() math: OK")
+
+
 async def main() -> None:
+    _check_band_sensitivity_math()
+
     state = AppState()
     state.eeg_connection_state = "simulated"
     state.eeg_ready.set()
@@ -181,7 +201,71 @@ async def main() -> None:
         )
         print(f"[smoke] live peak meter shows {peak_text!r} OK")
 
-        # ----- Test 7: close X re-hides the panel.
+        # ----- Test 7: per-band sensitivity sliders (alpha/beta/theta).
+        # Three identical knobs; verify all three propagate + the
+        # math holds for one of them by checking the live peak text
+        # updates after the slider change.
+        for band, target in (("alpha", 0.5), ("beta", 1.5), ("theta", 0.7)):
+            key = f"{band}_sensitivity"
+            await page.evaluate(
+                f"() => {{"
+                f"  const s = document.querySelector("
+                f"    '.tune-row[data-key=\"{key}\"] [data-role=\"slider\"]'"
+                f"  );"
+                f"  s.value = '{target}';"
+                f"  s.dispatchEvent(new Event('input', {{bubbles: true}}));"
+                f"}}"
+            )
+            await asyncio.sleep(0.25)
+            actual = getattr(state, f"live_{band}_sensitivity")
+            assert abs(actual - target) < 0.01, (
+                f"{band} sensitivity not propagated: {actual} (expected {target})"
+            )
+            print(f"[smoke] {band} sensitivity slider -> state.live_{band}_sensitivity = {target} OK")
+
+        # Live-peak meter on the alpha row must render the forged
+        # state.alpha as a 0..1 number (0.95) -- not a "µV" reading.
+        state.alpha = 0.95
+        state.beta = 0.40
+        state.theta = 0.10
+        await asyncio.sleep(0.2)
+        alpha_peak = await page.text_content(
+            ".tune-row[data-key='alpha_sensitivity'] [data-role='peak']"
+        )
+        assert alpha_peak and "0.95" in alpha_peak, (
+            f"alpha sensitivity meter must show normalized value, got {alpha_peak!r}"
+        )
+        print(f"[smoke] alpha live-peak meter shows {alpha_peak!r} OK")
+
+        # ----- Test 8: out-of-range typed sensitivity clamps server-side.
+        # Server range is [0.2, 3.0]; type something absurd.
+        await page.evaluate(
+            "() => {"
+            "  const n = document.querySelector("
+            "    '.tune-row[data-key=\"alpha_sensitivity\"] [data-role=\"number\"]'"
+            "  );"
+            "  n.value = '99';"
+            "  n.dispatchEvent(new Event('input', {bubbles: true}));"
+            "}"
+        )
+        await asyncio.sleep(0.25)
+        assert state.live_alpha_sensitivity == 3.0, (
+            f"server should have clamped alpha sensitivity to 3.0, got "
+            f"{state.live_alpha_sensitivity}"
+        )
+        print(f"[smoke] out-of-range alpha sens -> server clamp -> 3.0 OK")
+
+        # Reset alpha sensitivity to 1.0.
+        await page.click(
+            ".tune-row[data-key='alpha_sensitivity'] [data-role='reset']"
+        )
+        await asyncio.sleep(0.25)
+        assert state.live_alpha_sensitivity == 1.0, (
+            f"reset alpha sensitivity failed: {state.live_alpha_sensitivity}"
+        )
+        print(f"[smoke] alpha sensitivity reset -> 1.0 OK")
+
+        # ----- Test 9: close X re-hides the panel.
         await page.click("#tune-close")
         await asyncio.sleep(0.2)
         is_hidden_after = await page.evaluate(

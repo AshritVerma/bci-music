@@ -509,34 +509,47 @@
           refs.number.value = sv;
         }
       }
-      // Live peak meter (blink_ptp_uv / jaw_rms_uv). Normalize the
-      // peak against 1.5x the slider max so a "huge" reading still
-      // has visible headroom on the bar (clamped at 100% otherwise).
-      if (refs.peakValue && refs.peakFill && refs.marker) {
+      // Live peak meter. Per-key handling because the units differ:
+      //   * blink/jaw thresholds: peak is in µV, plot against 1.5x
+      //     the slider max so "huge" readings still have headroom;
+      //     show an amber threshold marker at the slider value.
+      //   * alpha/beta/theta sensitivity: peak is the post-multiplier
+      //     normalized value already in [0, 1] -- plot directly,
+      //     with NO marker (the slider value is a multiplier on a
+      //     different scale, so a marker would be misleading).
+      //   * lyria gain: no live peak; the meter row is collapsed.
+      if (refs.peakValue && refs.peakFill) {
         const peak =
           typeof t.live_peak === "number" && Number.isFinite(t.live_peak)
             ? t.live_peak
             : null;
         if (peak === null) {
-          // Lyria gain has no live peak; collapse the meter row.
           refs.row
             .querySelector(".tune-row-meter")
             ?.style.setProperty("display", "none");
         } else {
-          const value = parseFloat(refs.slider.value);
-          const meterMax = refs.sliderMax * 1.5;
-          const peakPct = Math.max(0, Math.min(100, (peak / meterMax) * 100));
-          const markerPct = Math.max(
-            0,
-            Math.min(100, (value / meterMax) * 100)
-          );
-          // Tabular numeric reading, e.g. "1437 µV".
-          const isInt = key !== "lyria_sensitivity_gain";
-          refs.peakValue.textContent = isInt
-            ? `${Math.round(peak)} µV`
-            : peak.toFixed(2);
+          const isBandSensitivity = key.endsWith("_sensitivity");
+          let peakPct;
+          if (isBandSensitivity) {
+            // Already in [0, 1] -- map straight to 0..100%.
+            peakPct = Math.max(0, Math.min(100, peak * 100));
+            refs.peakValue.textContent = peak.toFixed(2);
+          } else {
+            const meterMax = refs.sliderMax * 1.5;
+            peakPct = Math.max(0, Math.min(100, (peak / meterMax) * 100));
+            refs.peakValue.textContent = `${Math.round(peak)} µV`;
+            // Threshold marker only meaningful for blink/jaw (slider
+            // value and peak share µV units).
+            if (refs.marker) {
+              const value = parseFloat(refs.slider.value);
+              const markerPct = Math.max(
+                0,
+                Math.min(100, (value / meterMax) * 100)
+              );
+              refs.marker.style.left = `${markerPct}%`;
+            }
+          }
           refs.peakFill.style.width = `${peakPct}%`;
-          refs.marker.style.left = `${markerPct}%`;
         }
       }
     }

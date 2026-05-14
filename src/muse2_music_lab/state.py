@@ -245,6 +245,22 @@ class AppState:
     live_lyria_sensitivity_gain: float = field(
         default_factory=lambda: float(config.LYRIA_SENSITIVITY_GAIN)
     )
+    # Per-band sensitivity multipliers applied AFTER the Normalizer's
+    # tanh squash, BEFORE the [0, 1] clip. The mapping is symmetric
+    # around 0.5:
+    #     y_out = 0.5 + (y_normalized - 0.5) * sensitivity
+    # So a value the calibration had pegged at 1.0 lands at:
+    #     sensitivity = 0.5 -> 0.75   (less saturation)
+    #     sensitivity = 1.0 -> 1.00   (default, no change)
+    #     sensitivity = 2.0 -> 1.50 -> clipped to 1.0 (more saturation)
+    # Use case: the brain shifts away from where calibration captured
+    # it during a long demo (caffeine, fatigue, room change) and one
+    # band starts living at 0 or 1. Drag the band's sensitivity below
+    # 1.0 to give it expressive headroom again, instead of having to
+    # eat an 8-second recalibration mid-set.
+    live_alpha_sensitivity: float = 1.0
+    live_beta_sensitivity: float = 1.0
+    live_theta_sensitivity: float = 1.0
 
     # ------- Calibration progress (browser banner) -------
     # `calibrating` flips True while the EEG loop is collecting baseline
@@ -385,6 +401,26 @@ class AppState:
                     "value": self.live_lyria_sensitivity_gain,
                     "default": float(config.LYRIA_SENSITIVITY_GAIN),
                     "live_peak": None,
+                },
+                # Per-band sensitivity. live_peak is the current
+                # post-multiplier normalized value (0..1) so the
+                # operator can see at a glance "alpha is pegged at
+                # 1.00 -> drag the slider down". Default for all
+                # three is 1.0 (no change vs raw normalize output).
+                "alpha_sensitivity": {
+                    "value": self.live_alpha_sensitivity,
+                    "default": 1.0,
+                    "live_peak": self.alpha,
+                },
+                "beta_sensitivity": {
+                    "value": self.live_beta_sensitivity,
+                    "default": 1.0,
+                    "live_peak": self.beta,
+                },
+                "theta_sensitivity": {
+                    "value": self.live_theta_sensitivity,
+                    "default": 1.0,
+                    "live_peak": self.theta,
                 },
             },
         }

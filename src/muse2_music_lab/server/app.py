@@ -313,6 +313,14 @@ async def _handle_action(
             "blink_threshold_uv": (50.0, 4000.0),
             "jaw_threshold_uv": (20.0, 2000.0),
             "lyria_sensitivity_gain": (0.5, 4.0),
+            # Per-band sensitivity. 0.2 lets the operator squash a
+            # heavily-saturating band almost flat to 0.5 (rescuing it
+            # without recalibrating); 3.0 lets them stretch a sluggish
+            # band into its full 0..1 envelope. 1.0 (default) is
+            # identity.
+            "alpha_sensitivity": (0.2, 3.0),
+            "beta_sensitivity": (0.2, 3.0),
+            "theta_sensitivity": (0.2, 3.0),
         }
         if key not in ranges:
             await _ack(ws, ok=False, error=f"unknown threshold key: {key!r}")

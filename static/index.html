@@ -217,6 +217,109 @@
         </div>
       </div>
 
+      <!--
+        Per-band sensitivity multipliers. Live peak shows the CURRENT
+        normalized [0, 1] value for that band so the operator can see
+        "alpha is pegged at 1.00 -> drag the slider down". Drag below
+        1.0 to compress toward 0.5 (rescue an over-saturated band);
+        drag above 1.0 to stretch out a sluggish one. No threshold
+        marker on these meters -- the value being measured (current
+        normalized signal) lives on a different scale from the slider
+        (sensitivity multiplier), so a marker would be misleading.
+      -->
+      <div class="tune-row tune-row--no-marker" data-key="alpha_sensitivity">
+        <div class="tune-row-head">
+          <span class="tune-name">Alpha sensitivity</span>
+          <span class="tune-units">x multiplier (1 = default)</span>
+        </div>
+        <div class="tune-row-meter">
+          <span class="tune-meter-label">live alpha</span>
+          <span class="tune-meter-value" data-role="peak">—</span>
+          <span class="tune-meter-bar"><span class="tune-meter-fill" data-role="peak-fill"></span></span>
+        </div>
+        <div class="tune-row-controls">
+          <input
+            type="range"
+            class="tune-slider"
+            data-role="slider"
+            min="0.2" max="3.0" step="0.05"
+            value="1.0"
+            aria-label="Alpha sensitivity slider"
+          />
+          <input
+            type="number"
+            class="tune-number"
+            data-role="number"
+            min="0.2" max="3.0" step="0.05"
+            value="1.0"
+            aria-label="Alpha sensitivity value"
+          />
+          <button type="button" class="tune-reset" data-role="reset" title="Reset to 1.0">reset</button>
+        </div>
+      </div>
+
+      <div class="tune-row tune-row--no-marker" data-key="beta_sensitivity">
+        <div class="tune-row-head">
+          <span class="tune-name">Beta sensitivity</span>
+          <span class="tune-units">x multiplier (1 = default)</span>
+        </div>
+        <div class="tune-row-meter">
+          <span class="tune-meter-label">live beta</span>
+          <span class="tune-meter-value" data-role="peak">—</span>
+          <span class="tune-meter-bar"><span class="tune-meter-fill" data-role="peak-fill"></span></span>
+        </div>
+        <div class="tune-row-controls">
+          <input
+            type="range"
+            class="tune-slider"
+            data-role="slider"
+            min="0.2" max="3.0" step="0.05"
+            value="1.0"
+            aria-label="Beta sensitivity slider"
+          />
+          <input
+            type="number"
+            class="tune-number"
+            data-role="number"
+            min="0.2" max="3.0" step="0.05"
+            value="1.0"
+            aria-label="Beta sensitivity value"
+          />
+          <button type="button" class="tune-reset" data-role="reset" title="Reset to 1.0">reset</button>
+        </div>
+      </div>
+
+      <div class="tune-row tune-row--no-marker" data-key="theta_sensitivity">
+        <div class="tune-row-head">
+          <span class="tune-name">Theta sensitivity</span>
+          <span class="tune-units">x multiplier (1 = default)</span>
+        </div>
+        <div class="tune-row-meter">
+          <span class="tune-meter-label">live theta</span>
+          <span class="tune-meter-value" data-role="peak">—</span>
+          <span class="tune-meter-bar"><span class="tune-meter-fill" data-role="peak-fill"></span></span>
+        </div>
+        <div class="tune-row-controls">
+          <input
+            type="range"
+            class="tune-slider"
+            data-role="slider"
+            min="0.2" max="3.0" step="0.05"
+            value="1.0"
+            aria-label="Theta sensitivity slider"
+          />
+          <input
+            type="number"
+            class="tune-number"
+            data-role="number"
+            min="0.2" max="3.0" step="0.05"
+            value="1.0"
+            aria-label="Theta sensitivity value"
+          />
+          <button type="button" class="tune-reset" data-role="reset" title="Reset to 1.0">reset</button>
+        </div>
+      </div>
+
       <div class="tune-row" data-key="lyria_sensitivity_gain">
         <div class="tune-row-head">
           <span class="tune-name">Lyria sensitivity gain</span>

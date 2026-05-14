@@ -188,6 +188,16 @@ You can pivot to a totally different vibe without restarting:
   resting peak but below the deliberate-trigger peak. Takes effect
   within one EEG tick (~250 ms). Reset restores the config default.
 
+- **One band (alpha / beta / theta) is pegged at 0 or 1**: the brain
+  has drifted away from where calibration captured it (caffeine,
+  fatigue, room change). Same Tune drawer: drag the band's
+  **sensitivity** slider below 1.0 to compress the value back toward
+  0.5 and recover expressive headroom -- without losing the rest of
+  the calibration baseline. e.g., if alpha sits at 1.00, drop alpha
+  sensitivity to ~0.5 and it'll resettle around 0.75. Drag above 1.0
+  to do the opposite (rescue a sluggish band that never moves out
+  of the 0.4-0.6 middle).
+
 - **EEG: lost / Muse: failed pill is red**: BLE drop. The supervisor
   auto-reconnects up to 3 times. If it gives up, click the EEG mode
   toggle to swap to simulated and continue. Re-seat the band; you

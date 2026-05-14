@@ -52,6 +52,29 @@ from muse2_music_lab.state import AppState
 _CONTINUOUS_NAMES: tuple[str, ...] = ("alpha", "beta", "theta")
 
 
+def _apply_band_sensitivity(y_norm: float, sensitivity: float) -> float:
+    """Symmetric scaling of a normalized [0, 1] value around 0.5.
+
+        y_out = clip01(0.5 + (y_norm - 0.5) * sensitivity)
+
+    sensitivity = 1.0 -> identity (default)
+    sensitivity < 1.0 -> compress toward 0.5 (less saturation; useful
+                         when a band has drifted to permanent 0/1 mid-
+                         demo and you can't afford to recalibrate)
+    sensitivity > 1.0 -> stretch away from 0.5 (more contrast; values
+                         saturate to 0/1 sooner)
+
+    Hot-tunable from the browser TUNE panel via state.live_*_sensitivity.
+    """
+    s = float(sensitivity)
+    y = 0.5 + (float(y_norm) - 0.5) * s
+    if y < 0.0:
+        return 0.0
+    if y > 1.0:
+        return 1.0
+    return y
+
+
 # ---------------------------------------------------------------------------
 # Real Muse 2 path
 # ---------------------------------------------------------------------------
@@ -192,9 +215,22 @@ async def _stream_body(
         smoothed_theta = emas["theta"].update(frame.theta)
 
         norm = normalizer_holder[0]
-        state.alpha = max(0.0, min(1.0, norm.normalize("alpha", smoothed_alpha)))
-        state.beta = max(0.0, min(1.0, norm.normalize("beta", smoothed_beta)))
-        state.theta = max(0.0, min(1.0, norm.normalize("theta", smoothed_theta)))
+        # Per-band sensitivity is applied on top of the calibrated tanh
+        # normalization, so dragging the slider down rescues a band
+        # that has drifted into permanent saturation without throwing
+        # away the calibration baseline.
+        state.alpha = _apply_band_sensitivity(
+            norm.normalize("alpha", smoothed_alpha),
+            state.live_alpha_sensitivity,
+        )
+        state.beta = _apply_band_sensitivity(
+            norm.normalize("beta", smoothed_beta),
+            state.live_beta_sensitivity,
+        )
+        state.theta = _apply_band_sensitivity(
+            norm.normalize("theta", smoothed_theta),
+            state.live_theta_sensitivity,
+        )
 
         asym_raw = compute_asymmetry(window, info.sampling_rate)
         state.asymmetry = max(0.0, min(1.0, asym_ema.update(asym_raw)))
@@ -397,9 +433,19 @@ async def run_simulated_eeg_loop(state: AppState) -> None:
             t = time.monotonic() - start
             frame, normalized, blink_uv, jaw_uv = synthetic_frame(t)
 
-            state.alpha = normalized["alpha"]
-            state.beta = normalized["beta"]
-            state.theta = normalized["theta"]
+            # Per-band sensitivity also applies on the simulated path so
+            # the TUNE panel sliders behave identically in both modes
+            # (otherwise a demo on simulated EEG would show the slider
+            # do nothing, which would erode the operator's trust in it).
+            state.alpha = _apply_band_sensitivity(
+                normalized["alpha"], state.live_alpha_sensitivity
+            )
+            state.beta = _apply_band_sensitivity(
+                normalized["beta"], state.live_beta_sensitivity
+            )
+            state.theta = _apply_band_sensitivity(
+                normalized["theta"], state.live_theta_sensitivity
+            )
             # Asymmetry: slow LFO around the natural 0.5 idle midpoint.
             # Period intentionally coprime with the alpha/beta/theta
             # periods in synthetic_frame so the demo doesn't lock into

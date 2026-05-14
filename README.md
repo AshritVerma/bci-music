@@ -112,12 +112,14 @@ Browser controls (always available):
   synthetic generator without restarting
 - **Tune** — opens a right-side drawer for live threshold tuning.
   Adjust the blink trigger (µV peak-to-peak), jaw clench trigger
-  (µV peak |HP|), and Lyria sensitivity gain on the fly when the
-  band's signal quality drifts away from the calibration baseline
-  mid-demo. Each row has a slider + a number input + a reset button,
-  plus a live peak meter showing where the current EEG sits
-  relative to the threshold marker. Hidden in `--cloud` mode (a
-  shared visitor must not be able to retune for everyone else)
+  (µV peak |HP|), per-band sensitivity multipliers for alpha / beta
+  / theta (rescue any band that has drifted into permanent 0/1
+  saturation without recalibrating), and the Lyria sensitivity gain
+  on the fly. Each row has a slider + a number input + a reset
+  button, plus a live peak meter so you can see the current EEG
+  reading next to the threshold marker (or the post-multiplier
+  normalized value, for sensitivity rows). Hidden in `--cloud` mode
+  (a shared visitor must not be able to retune for everyone else)
 - **Record / Save** — capture exactly what's playing (visualizer
   canvas + Lyria audio) into a single `.webm` file (VP9 video +
   Opus audio). Click Record to start (a red dot pulses + an elapsed

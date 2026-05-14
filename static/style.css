@@ -975,6 +975,12 @@ body.hud-hidden #hud-toggle {
   transform: translateX(-1px);
   transition: left 80ms linear;
 }
+/* Sensitivity rows: the slider value (multiplier) and the meter
+   value (normalized signal) live on different scales, so the
+   threshold marker isn't meaningful and would confuse users. */
+.tune-row--no-marker .tune-meter-marker {
+  display: none;
+}
 .tune-row-controls {
   display: grid;
   grid-template-columns: 1fr 80px auto;
