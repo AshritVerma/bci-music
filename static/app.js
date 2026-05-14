@@ -42,6 +42,10 @@
     calibrationBanner: document.getElementById("calibration-banner"),
     calibrationCountdown: document.getElementById("calibration-countdown"),
     calibrationProgressFill: document.getElementById("calibration-progress-fill"),
+    tuneToggle: document.getElementById("tune-toggle"),
+    tunePanel: document.getElementById("tune-panel"),
+    tuneClose: document.getElementById("tune-close"),
+    tuneRows: new Map(),
     recordBtn: document.getElementById("record-btn"),
     recordLabel: document.querySelector("#record-btn .record-label"),
     recordElapsed: document.querySelector("#record-btn .record-elapsed"),
@@ -382,8 +386,190 @@
       // Hide controls that don't make sense for shared deploys.
       els.quitBtn.hidden = true;
       els.eegModeBtn.hidden = true;
+      // Tune panel + its toggle: a single visitor must not be able
+      // to retune the experience for everyone else (server enforces
+      // this anyway by rejecting set_threshold in cloud mode, but
+      // hiding the affordance avoids the user clicking and getting
+      // a confusing rejection toast).
+      if (els.tuneToggle) els.tuneToggle.hidden = true;
+      if (els.tunePanel) {
+        els.tunePanel.hidden = true;
+        els.tunePanel.setAttribute("aria-hidden", "true");
+      }
     }
   }
+
+  // ---- Tune panel (live threshold tuning) -------------------------
+  // The drawer slides in from the right. Each row binds a slider +
+  // a number input + a reset-to-default button to one entry in the
+  // server's snapshot.tunables map. Any of (slider, number, reset)
+  // sends a {action: "set_threshold", key, value} over the WS; the
+  // server clamps + writes state.live_*; the brainflow loop picks
+  // up the new value on the next tick (~250ms) and the next snapshot
+  // includes the updated `value` so the controls re-sync. This means
+  // ALL three controls always agree (slider drag bumps the number
+  // box and vice versa via the snapshot path, no local mirroring
+  // logic needed).
+  function setupTuneRows() {
+    document.querySelectorAll(".tune-row[data-key]").forEach((row) => {
+      const key = row.dataset.key;
+      const slider = row.querySelector('[data-role="slider"]');
+      const number = row.querySelector('[data-role="number"]');
+      const reset = row.querySelector('[data-role="reset"]');
+      const peakValue = row.querySelector('[data-role="peak"]');
+      const peakFill = row.querySelector('[data-role="peak-fill"]');
+      const marker = row.querySelector('[data-role="threshold-marker"]');
+      const sliderMin = parseFloat(slider.min);
+      const sliderMax = parseFloat(slider.max);
+      const refs = {
+        row, slider, number, reset, peakValue, peakFill, marker,
+        sliderMin, sliderMax,
+        // `defaultValue` is filled by the first snapshot; until then,
+        // the reset button targets the slider's HTML default value
+        // as a sane fallback.
+        defaultValue: parseFloat(slider.value),
+        // `pendingValue` exists so the user's in-flight drag isn't
+        // overwritten by an inbound snapshot mid-drag (which would
+        // cause the thumb to jump back to the previous position
+        // before the new push round-trips). Cleared on input commit
+        // (mouseup / keyup / blur).
+        pendingValue: null,
+      };
+      els.tuneRows.set(key, refs);
+
+      // Send on every input event (drag / type) so the music
+      // responds immediately. Network is local + the server is
+      // idempotent on repeated values, so spam is fine.
+      slider.addEventListener("input", () => {
+        const v = parseFloat(slider.value);
+        number.value = String(v);
+        refs.pendingValue = v;
+        sendThreshold(key, v);
+      });
+      slider.addEventListener("change", () => {
+        // Drag finished; the next snapshot can re-sync.
+        refs.pendingValue = null;
+      });
+      number.addEventListener("input", () => {
+        const v = parseFloat(number.value);
+        if (Number.isNaN(v)) return;
+        // Clamp to slider bounds so the slider stays in sync visually.
+        const clamped = Math.max(sliderMin, Math.min(sliderMax, v));
+        slider.value = String(clamped);
+        refs.pendingValue = clamped;
+        sendThreshold(key, clamped);
+      });
+      number.addEventListener("change", () => {
+        refs.pendingValue = null;
+      });
+      number.addEventListener("blur", () => {
+        // If the user typed something out of range, snap the visible
+        // number to whatever the server actually stored (next snapshot
+        // will overwrite this anyway, but this avoids a flash).
+        if (parseFloat(number.value) !== parseFloat(slider.value)) {
+          number.value = slider.value;
+        }
+      });
+      reset.addEventListener("click", () => {
+        const target = refs.defaultValue;
+        slider.value = String(target);
+        number.value = String(target);
+        refs.pendingValue = null;
+        sendThreshold(key, target);
+      });
+    });
+  }
+  function sendThreshold(key, value) {
+    sendAction({ action: "set_threshold", key, value: Number(value) });
+  }
+  function applyTunablesSnapshot(tunables) {
+    // Sync slider + number + peak meter + threshold marker for each
+    // row from the latest snapshot. Skips the slider/number for any
+    // row currently being dragged (pendingValue !== null) so we
+    // don't fight the user mid-input.
+    if (!tunables || typeof tunables !== "object") return;
+    for (const [key, refs] of els.tuneRows) {
+      const t = tunables[key];
+      if (!t) continue;
+      // First snapshot establishes the canonical default the reset
+      // button targets (server is the source of truth -- if config
+      // changes between sessions, the reset value follows).
+      if (typeof t.default === "number") {
+        refs.defaultValue = t.default;
+      }
+      if (typeof t.value === "number" && refs.pendingValue === null) {
+        const sv = String(t.value);
+        if (refs.slider.value !== sv) refs.slider.value = sv;
+        // Number input: only overwrite if the field isn't focused
+        // (typing) so the user's in-flight typing isn't clobbered.
+        if (
+          document.activeElement !== refs.number &&
+          refs.number.value !== sv
+        ) {
+          refs.number.value = sv;
+        }
+      }
+      // Live peak meter (blink_ptp_uv / jaw_rms_uv). Normalize the
+      // peak against 1.5x the slider max so a "huge" reading still
+      // has visible headroom on the bar (clamped at 100% otherwise).
+      if (refs.peakValue && refs.peakFill && refs.marker) {
+        const peak =
+          typeof t.live_peak === "number" && Number.isFinite(t.live_peak)
+            ? t.live_peak
+            : null;
+        if (peak === null) {
+          // Lyria gain has no live peak; collapse the meter row.
+          refs.row
+            .querySelector(".tune-row-meter")
+            ?.style.setProperty("display", "none");
+        } else {
+          const value = parseFloat(refs.slider.value);
+          const meterMax = refs.sliderMax * 1.5;
+          const peakPct = Math.max(0, Math.min(100, (peak / meterMax) * 100));
+          const markerPct = Math.max(
+            0,
+            Math.min(100, (value / meterMax) * 100)
+          );
+          // Tabular numeric reading, e.g. "1437 µV".
+          const isInt = key !== "lyria_sensitivity_gain";
+          refs.peakValue.textContent = isInt
+            ? `${Math.round(peak)} µV`
+            : peak.toFixed(2);
+          refs.peakFill.style.width = `${peakPct}%`;
+          refs.marker.style.left = `${markerPct}%`;
+        }
+      }
+    }
+  }
+  function openTunePanel() {
+    if (!els.tunePanel || !els.tuneToggle) return;
+    if (cloudMode) return;
+    els.tunePanel.hidden = false;
+    els.tunePanel.setAttribute("aria-hidden", "false");
+    els.tuneToggle.setAttribute("aria-expanded", "true");
+  }
+  function closeTunePanel() {
+    if (!els.tunePanel || !els.tuneToggle) return;
+    els.tunePanel.hidden = true;
+    els.tunePanel.setAttribute("aria-hidden", "true");
+    els.tuneToggle.setAttribute("aria-expanded", "false");
+  }
+  function toggleTunePanel() {
+    if (els.tunePanel.hidden) openTunePanel();
+    else closeTunePanel();
+  }
+  setupTuneRows();
+  if (els.tuneToggle) els.tuneToggle.addEventListener("click", toggleTunePanel);
+  if (els.tuneClose) els.tuneClose.addEventListener("click", closeTunePanel);
+  // Esc closes the drawer, but ONLY when focus isn't inside an input
+  // (otherwise we'd swallow the standard "Escape cancels edit" UX).
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (els.tunePanel.hidden) return;
+    const tag = e.target && e.target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    closeTunePanel();
+  });
 
   // ---- audio resume (cloud-mode autoplay policy) -------------------
   // In cloud mode the AudioContext starts suspended and needs a user
@@ -772,6 +958,13 @@
     // the Quit button via the .hidden attribute set in JS).
     if (typeof s.cloud_mode === "boolean") {
       applyCloudMode(s.cloud_mode);
+    }
+
+    // Tune panel: re-sync slider / number / live-peak meter from
+    // server snapshot. Skipped naturally during a drag because
+    // applyTunablesSnapshot honors pendingValue.
+    if (s.tunables) {
+      applyTunablesSnapshot(s.tunables);
     }
 
     // Phase 10: hide the Start panel once Lyria has been started --

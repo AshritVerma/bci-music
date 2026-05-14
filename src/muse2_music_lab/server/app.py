@@ -281,6 +281,53 @@ async def _handle_action(
         await _ack(ws, ok=True, info=f"crossfading over {chunks} chunks")
         return
 
+    if action == "set_threshold":
+        # Browser TUNE panel: hot-tune one of the live thresholds the
+        # operator can slide mid-demo (blink trigger, jaw trigger,
+        # Lyria sensitivity gain). Each key has a distinct allowed
+        # range; values are clamped server-side so a malicious /
+        # buggy client can't push absurd values that would either
+        # peg every signal to the trigger (very low) or never fire
+        # (very high).
+        #
+        # Locked in cloud mode: a single shared visitor must not be
+        # able to retune the experience for everyone else. Same
+        # rationale as Quit + EEG-mode toggle.
+        if state.cloud_mode:
+            await _ack(
+                ws, ok=False, error="threshold tuning is disabled in cloud mode"
+            )
+            return
+        key = (msg.get("key") or "").strip()
+        try:
+            value = float(msg.get("value"))
+        except (TypeError, ValueError):
+            await _ack(ws, ok=False, error=f"value must be a number (got {msg.get('value')!r})")
+            return
+        # Per-key clamp ranges. Mirrored in static/app.js as the
+        # slider min/max so the user can't drag past these either.
+        # If you widen the range here remember to widen the slider
+        # bounds in JS or the slider will pin at its old max while
+        # the server happily accepts the wider value via direct WS.
+        ranges = {
+            "blink_threshold_uv": (50.0, 4000.0),
+            "jaw_threshold_uv": (20.0, 2000.0),
+            "lyria_sensitivity_gain": (0.5, 4.0),
+        }
+        if key not in ranges:
+            await _ack(ws, ok=False, error=f"unknown threshold key: {key!r}")
+            return
+        lo, hi = ranges[key]
+        clamped = max(lo, min(hi, value))
+        setattr(state, f"live_{key}", clamped)
+        print(
+            f"[server] action=set_threshold  key={key!r} value={value:.3f} "
+            f"-> clamped={clamped:.3f}",
+            flush=True,
+        )
+        await _ack(ws, ok=True)
+        return
+
     if action == "quit":
         # Set the orchestrator's stop event so EVERY task (EEG, Lyria,
         # audio, server, evolver, ...) cancels in unison. We ack BEFORE

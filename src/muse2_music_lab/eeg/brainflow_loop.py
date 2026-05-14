@@ -172,6 +172,14 @@ async def _stream_body(
             asym_ema.reset()
             print("[eeg] resumed streaming with new baseline", flush=True)
 
+        # Live threshold sync: the browser TUNE panel writes new values
+        # directly into state.live_* via the WS set_threshold action.
+        # Re-applying every tick is cheap (two attribute writes) and
+        # keeps a slider drag taking effect within ~one tick (<= 250 ms),
+        # without needing a separate event/queue/wakeup channel.
+        blink.threshold = float(state.live_blink_threshold_uv)
+        jaw.threshold = float(state.live_jaw_threshold_uv)
+
         window = await _read_window(loop, board)
         if window.shape[1] < config.WINDOW_SIZE:
             await asyncio.sleep(config.PERFORM_TICK_S)

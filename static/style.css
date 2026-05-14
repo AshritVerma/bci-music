@@ -823,3 +823,240 @@ body.hud-hidden #hud-toggle {
 .prompt-chip:active {
   transform: translateY(1px);
 }
+
+/* ---- Tune panel (right-side drawer for live threshold tuning) ----
+   Slides in from the right edge when the operator clicks "Tune" in
+   the header. Stays open until they close it (Esc, click X, or click
+   the toggle again). Doesn't block the visualizer -- it overlays a
+   semi-transparent right column so the canvas is still visible
+   underneath / around it.
+
+   `[hidden]` ensures the panel is fully removed from layout when
+   collapsed (no leftover click-interception, same lesson learned
+   from the audio-enable overlay bug). */
+.tune-panel[hidden] { display: none !important; }
+.tune-panel {
+  position: fixed;
+  top: 56px;
+  right: 0;
+  bottom: 0;
+  width: min(420px, 90vw);
+  z-index: 35;
+  background: var(--panel-bg-strong);
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.45);
+  overflow-y: auto;
+  animation: tune-slide-in 0.22s ease-out;
+}
+@keyframes tune-slide-in {
+  from { transform: translateX(20px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+.tune-panel-inner {
+  padding: 16px 18px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.tune-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.tune-header h2 {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: var(--text);
+}
+.tune-close {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--label);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.tune-close:hover {
+  background: rgba(255, 90, 90, 0.12);
+  border-color: rgba(255, 90, 90, 0.5);
+  color: rgb(255, 140, 140);
+}
+.tune-blurb {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.tune-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(15, 19, 24, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.tune-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tune-name {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--text);
+  font-weight: 500;
+}
+.tune-units {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.tune-row-meter {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.tune-meter-label {
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+.tune-meter-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--label);
+  min-width: 5ch;
+  text-align: right;
+}
+.tune-meter-bar {
+  position: relative;
+  height: 6px;
+  background: rgba(120, 140, 160, 0.16);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.tune-meter-fill {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  background: linear-gradient(
+    90deg,
+    rgba(95, 193, 255, 0.35),
+    rgba(95, 193, 255, 0.85)
+  );
+  transition: width 80ms linear;
+}
+/* Threshold marker rides on top of the live-peak fill so the
+   operator can see at a glance "is my current peak above or below
+   the threshold I just set?". Vertical line, amber to match the
+   calibration banner / sensitivity colour family. */
+.tune-meter-marker {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: rgb(255, 184, 76);
+  box-shadow: 0 0 4px rgba(255, 184, 76, 0.7);
+  left: 0%;
+  transform: translateX(-1px);
+  transition: left 80ms linear;
+}
+.tune-row-controls {
+  display: grid;
+  grid-template-columns: 1fr 80px auto;
+  align-items: center;
+  gap: 8px;
+}
+.tune-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(120, 140, 160, 0.25);
+  outline: none;
+}
+.tune-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid rgba(15, 19, 24, 0.95);
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(95, 193, 255, 0.6);
+  transition: transform 0.05s ease;
+}
+.tune-slider::-webkit-slider-thumb:hover { transform: scale(1.1); }
+.tune-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid rgba(15, 19, 24, 0.95);
+  cursor: pointer;
+}
+.tune-number {
+  width: 100%;
+  background: rgba(15, 19, 24, 0.85);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.tune-number:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(95, 193, 255, 0.45);
+}
+/* Hide the up/down spinner buttons in WebKit/Firefox so the input
+   reads as a clean numeric field. The slider is the primary control
+   for coarse adjustment; the number is for typing exact values. */
+.tune-number::-webkit-outer-spin-button,
+.tune-number::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.tune-number { -moz-appearance: textfield; }
+.tune-reset {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.tune-reset:hover {
+  background: rgba(95, 193, 255, 0.12);
+  border-color: rgba(95, 193, 255, 0.45);
+  color: var(--accent);
+}
+.tune-toggle[aria-expanded="true"] {
+  background: rgba(95, 193, 255, 0.18);
+  border-color: rgba(95, 193, 255, 0.55);
+  color: var(--accent);
+}

@@ -99,12 +99,156 @@
         title="Stop the perform process gracefully. Same as pressing 'q' + Enter in the terminal."
       >Quit</button>
       <button
+        id="tune-toggle"
+        class="header-btn tune-toggle"
+        type="button"
+        aria-controls="tune-panel"
+        aria-expanded="false"
+        title="Open the threshold tuning panel. Adjust blink/jaw triggers and Lyria sensitivity live without restarting."
+      >Tune</button>
+      <button
         id="hud-toggle"
         type="button"
         title="Toggle the diagnostic HUD overlay (or press 'h')"
       >hide HUD</button>
     </div>
   </header>
+
+  <!--
+    Tune panel: collapsible right-side drawer for live threshold tuning.
+    Useful when the headset signal quality drifts away from the
+    calibration baseline mid-demo and triggers either saturate (every
+    eye twitch fires a blink) or go silent (real blinks no longer fire).
+    The slider lets the operator nudge the threshold past the live peak
+    reading without restarting the process; the number input next to
+    each slider lets them type an exact value if they have one in mind.
+
+    Reset buttons restore the config defaults. Hidden in cloud mode --
+    a single visitor must not be able to retune for everyone else.
+  -->
+  <aside id="tune-panel" class="tune-panel" aria-hidden="true" hidden>
+    <div class="tune-panel-inner">
+      <div class="tune-header">
+        <h2>Tune thresholds</h2>
+        <button
+          id="tune-close"
+          class="tune-close"
+          type="button"
+          aria-label="Close tune panel"
+          title="Close (or press Esc)"
+        >&times;</button>
+      </div>
+      <p class="tune-blurb">
+        Adjust live without restarting. Each row shows the current peak
+        reading from the EEG so you can see how close you are to the
+        threshold. Drag the slider, type an exact value, or click reset
+        to restore the default.
+      </p>
+
+      <div class="tune-row" data-key="blink_threshold_uv">
+        <div class="tune-row-head">
+          <span class="tune-name">Blink trigger</span>
+          <span class="tune-units">µV peak-to-peak</span>
+        </div>
+        <div class="tune-row-meter">
+          <span class="tune-meter-label">live peak</span>
+          <span class="tune-meter-value" data-role="peak">—</span>
+          <span class="tune-meter-bar"><span class="tune-meter-fill" data-role="peak-fill"></span><span class="tune-meter-marker" data-role="threshold-marker"></span></span>
+        </div>
+        <div class="tune-row-controls">
+          <input
+            type="range"
+            class="tune-slider"
+            data-role="slider"
+            min="50" max="4000" step="25"
+            value="1000"
+            aria-label="Blink threshold slider"
+          />
+          <input
+            type="number"
+            class="tune-number"
+            data-role="number"
+            min="50" max="4000" step="1"
+            value="1000"
+            aria-label="Blink threshold value"
+          />
+          <button
+            type="button"
+            class="tune-reset"
+            data-role="reset"
+            title="Reset to config default"
+          >reset</button>
+        </div>
+      </div>
+
+      <div class="tune-row" data-key="jaw_threshold_uv">
+        <div class="tune-row-head">
+          <span class="tune-name">Jaw clench trigger</span>
+          <span class="tune-units">µV peak | high-pass</span>
+        </div>
+        <div class="tune-row-meter">
+          <span class="tune-meter-label">live peak</span>
+          <span class="tune-meter-value" data-role="peak">—</span>
+          <span class="tune-meter-bar"><span class="tune-meter-fill" data-role="peak-fill"></span><span class="tune-meter-marker" data-role="threshold-marker"></span></span>
+        </div>
+        <div class="tune-row-controls">
+          <input
+            type="range"
+            class="tune-slider"
+            data-role="slider"
+            min="20" max="2000" step="5"
+            value="220"
+            aria-label="Jaw clench threshold slider"
+          />
+          <input
+            type="number"
+            class="tune-number"
+            data-role="number"
+            min="20" max="2000" step="1"
+            value="220"
+            aria-label="Jaw clench threshold value"
+          />
+          <button
+            type="button"
+            class="tune-reset"
+            data-role="reset"
+            title="Reset to config default"
+          >reset</button>
+        </div>
+      </div>
+
+      <div class="tune-row" data-key="lyria_sensitivity_gain">
+        <div class="tune-row-head">
+          <span class="tune-name">Lyria sensitivity gain</span>
+          <span class="tune-units">EEG -&gt; music contrast (1 = linear)</span>
+        </div>
+        <div class="tune-row-controls">
+          <input
+            type="range"
+            class="tune-slider"
+            data-role="slider"
+            min="0.5" max="4.0" step="0.05"
+            value="2.0"
+            aria-label="Lyria sensitivity gain slider"
+          />
+          <input
+            type="number"
+            class="tune-number"
+            data-role="number"
+            min="0.5" max="4.0" step="0.05"
+            value="2.0"
+            aria-label="Lyria sensitivity gain value"
+          />
+          <button
+            type="button"
+            class="tune-reset"
+            data-role="reset"
+            title="Reset to config default"
+          >reset</button>
+        </div>
+      </div>
+    </div>
+  </aside>
 
   <!--
     Phase 10 Start panel. Visible until the user clicks Start (or until

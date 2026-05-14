@@ -110,6 +110,14 @@ Browser controls (always available):
 - **Quit** — stops every task and exits the Python process cleanly
 - **EEG: real / simulated** — hot-swap between the headset and the
   synthetic generator without restarting
+- **Tune** — opens a right-side drawer for live threshold tuning.
+  Adjust the blink trigger (µV peak-to-peak), jaw clench trigger
+  (µV peak |HP|), and Lyria sensitivity gain on the fly when the
+  band's signal quality drifts away from the calibration baseline
+  mid-demo. Each row has a slider + a number input + a reset button,
+  plus a live peak meter showing where the current EEG sits
+  relative to the threshold marker. Hidden in `--cloud` mode (a
+  shared visitor must not be able to retune for everyone else)
 - **Record / Save** — capture exactly what's playing (visualizer
   canvas + Lyria audio) into a single `.webm` file (VP9 video +
   Opus audio). Click Record to start (a red dot pulses + an elapsed

@@ -214,6 +214,38 @@ class AppState:
     prompt_transition_progress: float = 0.0
     prompt_change_request: asyncio.Event = field(default_factory=asyncio.Event)
 
+    # ------- Live-tunable thresholds (browser TUNE panel) -------
+    # Mirror the relevant config defaults as MUTABLE fields so the
+    # operator can hot-tune them mid-demo without restarting the
+    # process. Trade-off: bypasses the config module's "constants"
+    # invariant, but the alternative (process restart per blink-
+    # threshold tweak) is catastrophic during a live demo where the
+    # band's signal quality drifts away from the calibration value.
+    #
+    # Wiring contract:
+    #   * brainflow_loop._stream_body re-reads `live_blink_threshold_uv`
+    #     and `live_jaw_threshold_uv` into `blink.threshold` /
+    #     `jaw.threshold` ON EVERY TICK. So a slider drag takes effect
+    #     within one PERFORM_TICK_S (~250 ms) -- effectively instant.
+    #   * lyria/mapping.state_to_lyria_config passes
+    #     `live_lyria_sensitivity_gain` as the `gain=` arg to
+    #     state_to_lyria_params, so the next Lyria control push picks
+    #     up the new value (next 1 s push window at most).
+    #   * server.app handles {action: "set_threshold", key, value}
+    #     and writes here after clamping to the per-key UI range.
+    #   * snapshot() exposes the current values + the original config
+    #     defaults so the browser can render reset buttons + slider
+    #     bounds without baking them into the frontend.
+    live_blink_threshold_uv: float = field(
+        default_factory=lambda: float(config.BLINK_THRESHOLD_UV)
+    )
+    live_jaw_threshold_uv: float = field(
+        default_factory=lambda: float(config.JAW_THRESHOLD_UV)
+    )
+    live_lyria_sensitivity_gain: float = field(
+        default_factory=lambda: float(config.LYRIA_SENSITIVITY_GAIN)
+    )
+
     # ------- Calibration progress (browser banner) -------
     # `calibrating` flips True while the EEG loop is collecting baseline
     # samples (initial connect AND every user-triggered recalibrate). The
@@ -333,4 +365,26 @@ class AppState:
             # (Quit, EEG-mode toggle) that don't make sense for a shared
             # public deployment.
             "cloud_mode": self.cloud_mode,
+            # Live-tunable thresholds the browser TUNE panel binds to.
+            # Currents come from the mutable live_* fields; defaults
+            # come straight from config so the panel can render its
+            # "reset" buttons + slider bounds without hardcoding them
+            # in JS (frontend stays in sync with config edits).
+            "tunables": {
+                "blink_threshold_uv": {
+                    "value": self.live_blink_threshold_uv,
+                    "default": float(config.BLINK_THRESHOLD_UV),
+                    "live_peak": self.blink_ptp_uv,
+                },
+                "jaw_threshold_uv": {
+                    "value": self.live_jaw_threshold_uv,
+                    "default": float(config.JAW_THRESHOLD_UV),
+                    "live_peak": self.jaw_rms_uv,
+                },
+                "lyria_sensitivity_gain": {
+                    "value": self.live_lyria_sensitivity_gain,
+                    "default": float(config.LYRIA_SENSITIVITY_GAIN),
+                    "live_peak": None,
+                },
+            },
         }

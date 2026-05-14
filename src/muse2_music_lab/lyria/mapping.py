@@ -159,11 +159,19 @@ def state_to_lyria_config(state) -> "object":  # type: ignore[override]
     """
     from google.genai import types
 
+    # Pull the live (browser-tunable) sensitivity gain off state so a
+    # mid-demo slider drag retunes the EEG -> Lyria contrast immediately
+    # at the next control push (<= LYRIA_CTRL_PUSH_INTERVAL_S = 1 s).
+    # Falls back to the config default if state predates the field.
+    live_gain = getattr(
+        state, "live_lyria_sensitivity_gain", config.LYRIA_SENSITIVITY_GAIN
+    )
     params = state_to_lyria_params(
         alpha=state.alpha,
         beta=state.beta,
         theta=state.theta,
         asymmetry=state.asymmetry,
+        gain=float(live_gain),
     )
     return types.LiveMusicGenerationConfig(
         bpm=params.bpm,

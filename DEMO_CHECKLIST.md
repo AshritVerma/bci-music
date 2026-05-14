@@ -178,6 +178,16 @@ You can pivot to a totally different vibe without restarting:
   disappears the instant the new baseline is captured. No audio
   interruption — Lyria keeps playing on the last config.
 
+- **Blink / jaw triggers saturate or stop firing**: signal-quality
+  drift from band slip / sweat / position change can pull the live
+  µV peak away from where it was at calibration time. Click
+  **Tune** in the header to open the right-side threshold drawer.
+  The "live peak" meter on each row shows the current EEG reading
+  with an amber marker at the active threshold. Drag the slider
+  (or type an exact value) so the threshold sits ~20-30% above the
+  resting peak but below the deliberate-trigger peak. Takes effect
+  within one EEG tick (~250 ms). Reset restores the config default.
+
 - **EEG: lost / Muse: failed pill is red**: BLE drop. The supervisor
   auto-reconnects up to 3 times. If it gives up, click the EEG mode
   toggle to swap to simulated and continue. Re-seat the band; you
