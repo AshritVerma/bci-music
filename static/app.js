@@ -41,6 +41,10 @@
     audioOverlay: document.getElementById("audio-enable-overlay"),
     audioBtn: document.getElementById("audio-enable-btn"),
     warmingBanner: document.getElementById("warming-banner"),
+    recordBtn: document.getElementById("record-btn"),
+    recordLabel: document.querySelector("#record-btn .record-label"),
+    recordElapsed: document.querySelector("#record-btn .record-elapsed"),
+    saveBtn: document.getElementById("save-btn"),
     rows: new Map(),
   };
   document.querySelectorAll(".row[data-key]").forEach((row) => {
@@ -435,6 +439,115 @@
     endSession("user clicked Quit");
   });
 
+  // ---- AV recorder wiring ------------------------------------------
+  // Record toggles between idle and recording. Save downloads the
+  // most recent finished blob. Both gate on lyria_started (no point
+  // recording before there's anything in the canvas) and on the
+  // recorder module being present (defense-in-depth: very old
+  // browsers might not support MediaRecorder).
+  let lyriaStartedFlag = false;
+  function refreshRecorderButtons() {
+    if (!window.recorder) {
+      els.recordBtn.disabled = true;
+      els.saveBtn.disabled = true;
+      return;
+    }
+    const s = window.recorder.status();
+    const canRecord = lyriaStartedFlag && !s.isRecording;
+    const canStop = s.isRecording;
+    els.recordBtn.disabled = !(canRecord || canStop);
+    els.recordBtn.classList.toggle("recording", s.isRecording);
+    if (s.isRecording) {
+      els.recordLabel.textContent = "Stop";
+      els.recordElapsed.hidden = false;
+      els.recordBtn.title = "Stop recording. The video will be held in memory; click Save to download.";
+    } else {
+      els.recordLabel.textContent = "Record";
+      els.recordElapsed.hidden = true;
+      els.recordElapsed.textContent = "";
+      els.recordBtn.title = lyriaStartedFlag
+        ? "Record what's playing (canvas + Lyria audio) into a single WebM file. Click again to stop."
+        : "Start a session first; the recorder needs something to capture.";
+    }
+    els.saveBtn.disabled = !s.hasBlob || s.isRecording;
+    if (s.hasBlob) {
+      const sec = (s.elapsedMs / 1000).toFixed(1);
+      const mb = (s.blobBytes / (1024 * 1024)).toFixed(1);
+      els.saveBtn.title = `Save the ${sec}s recording (${mb} MB) to your Downloads folder.`;
+    } else {
+      els.saveBtn.title = "Save will be enabled after you stop a recording.";
+    }
+  }
+  function fmtElapsed(ms) {
+    const totalS = Math.floor(ms / 1000);
+    const m = Math.floor(totalS / 60);
+    const s = totalS % 60;
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
+  }
+  if (window.recorder && window.recorder.onChange) {
+    window.recorder.onChange(() => refreshRecorderButtons());
+  }
+  // Live elapsed-time tick while recording. Driven from a 200 ms
+  // setInterval (cheap; only updates the textContent on a single
+  // span) rather than rAF since it's a once-per-second human-readable
+  // readout, not an animation.
+  setInterval(() => {
+    if (!window.recorder) return;
+    const s = window.recorder.status();
+    if (s.isRecording) {
+      els.recordElapsed.textContent = fmtElapsed(s.elapsedMs);
+    }
+  }, 200);
+  els.recordBtn.addEventListener("click", async () => {
+    if (!window.recorder) return;
+    const s = window.recorder.status();
+    if (s.isRecording) {
+      window.recorder.stop();
+      return;
+    }
+    if (s.hasBlob) {
+      // The user has an unsaved recording from the previous take.
+      // Don't silently throw it away -- ask before clobbering.
+      const ok = confirm(
+        "You have an unsaved recording. Starting a new one will discard it. Continue?"
+      );
+      if (!ok) return;
+      window.recorder.clear();
+    }
+    const ok = await window.recorder.start();
+    if (!ok) {
+      // Soft failure (no MediaRecorder, no canvas, etc.) -- recorder
+      // already logged the reason. Re-render so the disabled state
+      // reflects the failure cleanly.
+      refreshRecorderButtons();
+    }
+  });
+  els.saveBtn.addEventListener("click", () => {
+    if (!window.recorder) return;
+    const ok = window.recorder.save();
+    if (ok) {
+      // Drop the blob after save so the user can record fresh next
+      // time without the "discard previous?" confirm. (The browser
+      // has already accepted the download at this point.)
+      window.recorder.clear();
+    }
+  });
+  // beforeunload guard: a closed tab while recording silently drops
+  // the in-memory blob. Browsers ignore the custom message text
+  // (security) but DO show a generic "leave site?" prompt as long as
+  // we returnValue + preventDefault, which is enough to save the
+  // user from a fat-fingered Cmd+W mid-demo.
+  window.addEventListener("beforeunload", (e) => {
+    if (!window.recorder) return;
+    const s = window.recorder.status();
+    if (s.isRecording || s.hasBlob) {
+      e.preventDefault();
+      e.returnValue = "You have an active or unsaved recording.";
+      return e.returnValue;
+    }
+  });
+  refreshRecorderButtons();
+
   // ---- Phase 10: Start panel wiring --------------------------------
   // Send button is disabled when the textarea is empty. We don't gate
   // on EEG-connected; the music + visuals can still run with neutral
@@ -624,6 +737,15 @@
       hideStartPanel();
     }
 
+    // Recorder gating: enable the Record button only once the session
+    // is alive (no point recording before there's anything in the
+    // canvas). Same gate the prompt-edit affordance uses.
+    const lyriaStartedNow = !!s.lyria_started;
+    if (lyriaStartedNow !== lyriaStartedFlag) {
+      lyriaStartedFlag = lyriaStartedNow;
+      refreshRecorderButtons();
+    }
+
     // Warming-up banner: visible only between Start-clicked and the
     // first audio chunk landing. Lyria's lyria-realtime-exp model
     // sometimes takes 15-20s on a cold start (the supervisor's stall
@@ -729,8 +851,17 @@
       //   4. JSON audio_init -> { type:"audio_init", sample_rate, ... }
       //                         (one-shot, only in cloud mode, on connect)
       if (ev.data instanceof ArrayBuffer) {
+        // Two consumers per binary frame: audio.js plays it (cloud
+        // mode only -- no-op locally), recorder.js captures it for
+        // the in-browser MediaRecorder pipeline (no-op when not
+        // currently recording). Decoding the same chunk twice costs
+        // negligible CPU at 48 kHz stereo and keeps the two pipelines
+        // fully decoupled.
         if (window.audio && window.audio.pushChunk) {
           window.audio.pushChunk(ev.data);
+        }
+        if (window.recorder && window.recorder.pushChunk) {
+          window.recorder.pushChunk(ev.data);
         }
         return;
       }
@@ -740,13 +871,19 @@
 
       // audio_init: one-shot header that tells the browser to spin up
       // its AudioContext at the right sample rate before the first
-      // binary frame arrives. Local-mode pages never see this.
+      // binary frame arrives. Sent in BOTH local and cloud modes
+      // since the recorder also needs the format.
       if (msg && msg.type === "audio_init") {
+        const initMsg = {
+          sampleRate: msg.sample_rate,
+          channels: msg.channels,
+          playback: msg.playback !== false,  // default true for back-compat
+        };
         if (window.audio && window.audio.setup) {
-          window.audio.setup({
-            sampleRate: msg.sample_rate,
-            channels: msg.channels,
-          });
+          window.audio.setup(initMsg);
+        }
+        if (window.recorder && window.recorder.setup) {
+          window.recorder.setup(initMsg);
         }
         audioInitSeen = true;
         refreshAudioOverlay();

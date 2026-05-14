@@ -65,6 +65,33 @@
         disabled
         title="Re-run the 8-second EEG baseline capture. Disabled until the band is connected; no-op on simulated EEG."
       >Recalibrate</button>
+      <!--
+        AV recorder controls. Record toggles between idle and recording
+        (the same button label flips to "Stop"). While recording, a red
+        dot pulses next to the button label and a live elapsed-time
+        readout shows next to it. Save downloads the most recent blob;
+        disabled until a recording has finished. Both controls are
+        gated on lyria_started so the button can't fire before the
+        canvas has anything meaningful on it.
+      -->
+      <button
+        id="record-btn"
+        class="header-btn record-btn"
+        type="button"
+        disabled
+        title="Record what's playing (canvas + Lyria audio) into a single WebM file. Click again to stop. Disabled until the session has started."
+      >
+        <span class="record-dot" aria-hidden="true"></span>
+        <span class="record-label">Record</span>
+        <span class="record-elapsed" hidden></span>
+      </button>
+      <button
+        id="save-btn"
+        class="header-btn save-btn"
+        type="button"
+        disabled
+        title="Save the most recent recording to your Downloads folder. Disabled until you've stopped a recording."
+      >Save</button>
       <button
         id="quit-btn"
         class="header-btn header-btn-danger"
@@ -250,6 +277,7 @@
   -->
   <script type="module" src="/static/visualizer.js"></script>
   <script src="/static/audio.js"></script>
+  <script src="/static/recorder.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

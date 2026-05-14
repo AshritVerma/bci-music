@@ -242,6 +242,60 @@ header h1 {
   color: var(--bad);
 }
 
+/* ---- AV recorder controls (header) ----
+   Record button has three visible variants:
+     idle         -> grey dot, "Record"
+     recording    -> pulsing red dot, "Stop", live elapsed-time chip
+     disabled     -> dimmed (lyria_started === false)
+   Save button is plain header-btn until a blob is ready, then turns
+   accent-blue to draw the eye. */
+.record-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.record-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.record-btn.recording {
+  border-color: rgba(255, 111, 114, 0.6);
+  color: #ffb4b6;
+}
+.record-btn.recording .record-dot {
+  background: var(--bad);
+  box-shadow: 0 0 8px rgba(255, 111, 114, 0.8);
+  animation: record-pulse 1.4s ease-in-out infinite;
+}
+.record-btn.recording:hover:not(:disabled) {
+  background: rgba(255, 111, 114, 0.12);
+  border-color: var(--bad);
+}
+.record-elapsed {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95em;
+  opacity: 0.9;
+  margin-left: 2px;
+}
+@keyframes record-pulse {
+  0%   { opacity: 1.0; transform: scale(1.0); }
+  50%  { opacity: 0.6; transform: scale(0.85); }
+  100% { opacity: 1.0; transform: scale(1.0); }
+}
+.save-btn:not(:disabled) {
+  border-color: rgba(95, 193, 255, 0.55);
+  color: var(--accent);
+}
+.save-btn:not(:disabled):hover {
+  background: rgba(95, 193, 255, 0.14);
+  border-color: var(--accent);
+}
+
 /* Phase 10 EEG-mode toggle: the label is descriptive ("EEG: simulated
    -> use real") so it's wider than the other header buttons. Lock a
    min-width so the "Switching..." mid-state doesn't shrink the header
@@ -570,6 +624,19 @@ body.hud-hidden #hud-toggle {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+/* Explicit `display: <something>` rules win over the browser's
+   user-agent default `display: none` for the [hidden] attribute, so
+   without these overrides JS setting el.hidden = true would NOT
+   actually hide the element -- it would just be visually present
+   AND intercept clicks underneath, which silently breaks the
+   recorder buttons in headless test runs and even in real Chrome.
+   Apply to every overlay/banner that uses [hidden] toggling. */
+.audio-enable-overlay[hidden],
+.warming-banner[hidden],
+.ended-overlay[hidden],
+.prompt-transition[hidden] {
+  display: none !important;
 }
 .audio-enable-btn {
   display: inline-flex;
