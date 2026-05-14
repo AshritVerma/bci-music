@@ -1,4 +1,12 @@
-"""`muse2-music` CLI: run the BrainFlow → feature → DAW pipeline."""
+"""`muse2-music` CLI.
+
+Subcommands:
+  run        Live EEG -> TUI diagnostics (legacy, no music output).
+  perform    NEW Muse -> Lyria -> browser visualizer pipeline (Phase 3+).
+  simulate   Synthetic brain -> TUI (headset-free dev).
+  battery    Quick BLE telemetry read of the Muse 2 battery.
+  bt-reset   Cycle macOS Bluetooth to recover from stuck BLE state.
+"""
 
 from __future__ import annotations
 
@@ -8,115 +16,83 @@ from typing import Optional, Sequence
 from muse2_music_lab import config
 
 
+# ---------------------------------------------------------------------------
+# Subcommand dispatchers
+# ---------------------------------------------------------------------------
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
-    from muse2_music_lab.main import RunOptions, run
+    from muse2_music_lab.tui import RunOptions, run_with_tui
 
     opts = RunOptions(
-        backend=args.backend,
-        midi_port=args.midi_port,
-        osc_host=args.osc_host,
-        osc_port=args.osc_port,
         calibrate_seconds=args.calibrate_seconds,
         send_rate_hz=args.rate,
         window_size=args.window,
         smoothing_alpha=args.smoothing,
-        tui=args.tui,
-        viz=args.viz,
-        viz_host=args.viz_host,
-        viz_port=args.viz_port,
-        viz_prompt_source=args.viz_prompt_source,
     )
-
-    if args.tui:
-        try:
-            from muse2_music_lab.tui import run_with_tui
-
-            return run_with_tui(opts)
-        except ImportError as e:
-            print(
-                f"[tui] rich not available ({e}). Install with: "
-                "pip install -e '.[tui]'. Falling back to plain output."
-            )
-
-    return run(opts)
+    return run_with_tui(opts)
 
 
-def _cmd_list_midi(_: argparse.Namespace) -> int:
-    from muse2_music_lab.output_midi import list_output_ports
+def _cmd_perform(args: argparse.Namespace) -> int:
+    from muse2_music_lab.main import PerformOptions, run as perform_run
 
-    ports = list_output_ports()
-    if not ports:
-        print("(no MIDI output ports found)")
-        print(
-            "On macOS, enable the IAC Driver in Audio MIDI Setup "
-            "(Applications → Utilities → Audio MIDI Setup → Window → Show MIDI Studio)."
-        )
-        return 1
-    print("Available MIDI output ports:")
-    for name in ports:
-        marker = "  *" if name == config.MIDI_PORT_NAME or config.MIDI_PORT_NAME in name else "   "
-        print(f"{marker} {name}")
-    print(f"\nDefault in config.py: {config.MIDI_PORT_NAME!r}")
-    return 0
-
-
-def _cmd_monitor_midi(args: argparse.Namespace) -> int:
-    from muse2_music_lab.midi_monitor import run as monitor_run
-    return monitor_run(args.midi_port)
+    opts = PerformOptions(
+        prompt=args.prompt,
+        http_port=args.http_port,
+        no_browser=args.no_browser,
+        simulate_eeg=args.simulate_eeg,
+        no_lyria=args.no_lyria,
+        no_server=args.no_server,
+        no_tui=args.no_tui,
+        skip_seed=args.skip_seed,
+        no_seed_cache=args.no_seed_cache,
+        evolve_chunks=args.evolve_chunks,
+    )
+    return perform_run(opts)
 
 
 def _cmd_simulate(args: argparse.Namespace) -> int:
     from muse2_music_lab.simulate import SimulateOptions, run as sim_run
+
     opts = SimulateOptions(
-        backend=args.backend,
-        midi_port=args.midi_port,
-        osc_host=args.osc_host,
-        osc_port=args.osc_port,
         send_rate_hz=args.rate,
         duration_s=args.duration,
-        viz=args.viz,
-        viz_host=args.viz_host,
-        viz_port=args.viz_port,
-        viz_prompt_source=args.viz_prompt_source,
     )
     return sim_run(opts)
 
 
+def _cmd_battery(_: argparse.Namespace) -> int:
+    from muse2_music_lab.battery import run as battery_run
+
+    return battery_run()
+
+
+def _cmd_bt_reset(_: argparse.Namespace) -> int:
+    from muse2_music_lab.bt_reset import run as bt_reset_run
+
+    return bt_reset_run()
+
+
+# ---------------------------------------------------------------------------
+# Parser construction
+# ---------------------------------------------------------------------------
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="muse2-music",
+        prog="muse2",
         description=(
-            "Stream EEG from a Muse 2 via BrainFlow, extract musical features, "
-            "and route them to a DAW as MIDI CC or OSC."
+            "Stream EEG from a Muse 2 via BrainFlow. The 'perform' subcommand "
+            "drives the Lyria + browser-visualizer demo; 'run' shows a TUI of "
+            "the live signals; 'simulate' does the same with a synthetic brain."
         ),
     )
     sub = p.add_subparsers(dest="command", required=True)
 
-    pr = sub.add_parser("run", help="Run the live brain → DAW loop")
-    pr.add_argument(
-        "--backend",
-        choices=("midi", "osc", "both"),
-        default=config.OUTPUT_BACKEND,
-        help=f"Output backend (default: {config.OUTPUT_BACKEND})",
-    )
-    pr.add_argument(
-        "--midi-port",
-        default=config.MIDI_PORT_NAME,
-        dest="midi_port",
-        help=f"MIDI output port name (default: {config.MIDI_PORT_NAME!r})",
-    )
-    pr.add_argument(
-        "--osc-host",
-        default=config.OSC_HOST,
-        dest="osc_host",
-        help=f"OSC destination host (default: {config.OSC_HOST})",
-    )
-    pr.add_argument(
-        "--osc-port",
-        type=int,
-        default=config.OSC_PORT,
-        dest="osc_port",
-        help=f"OSC destination UDP port (default: {config.OSC_PORT})",
+    # ------- run (legacy EEG TUI diagnostics) -------
+    pr = sub.add_parser(
+        "run",
+        help="Live EEG -> TUI diagnostics (no music output).",
     )
     pr.add_argument(
         "--calibrate-seconds",
@@ -129,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--rate",
         type=float,
         default=config.SEND_RATE_HZ,
-        help="Output messages per second",
+        help="TUI refresh rate in Hz",
     )
     pr.add_argument(
         "--window",
@@ -143,97 +119,111 @@ def build_parser() -> argparse.ArgumentParser:
         default=config.SMOOTHING_ALPHA,
         help="EMA alpha (lower = smoother, more lag)",
     )
-    pr.add_argument(
-        "--tui",
-        action="store_true",
-        help="Show a live rich-powered TUI (requires the 'tui' extra)",
-    )
-    pr.add_argument(
-        "--viz",
-        action="store_true",
-        default=config.VIZ_ENABLED,
-        help="Publish /viz/* OSC for the TouchDesigner visual layer (in addition to the DAW backend)",
-    )
-    pr.add_argument(
-        "--viz-host",
-        default=config.VIZ_HOST,
-        dest="viz_host",
-        help=f"Viz OSC destination host (default: {config.VIZ_HOST})",
-    )
-    pr.add_argument(
-        "--viz-port",
-        type=int,
-        default=config.VIZ_PORT,
-        dest="viz_port",
-        help=f"Viz OSC destination UDP port (default: {config.VIZ_PORT})",
-    )
-    pr.add_argument(
-        "--viz-prompt-source",
-        choices=("auto", "manual", "mix"),
-        default=config.VIZ_PROMPT_SOURCE_DEFAULT,
-        dest="viz_prompt_source",
-        help=(
-            "Prompt source for the sidecar. 'auto' = brain-only bank interpolation "
-            "(no user text needed); 'manual' = use /viz/prompt/base text only; "
-            f"'mix' = both. Default: {config.VIZ_PROMPT_SOURCE_DEFAULT}"
-        ),
-    )
     pr.set_defaults(func=_cmd_run)
 
-    pl = sub.add_parser(
-        "list-midi", help="List available MIDI output ports (for IAC setup checks)"
+    # ------- perform (new Lyria + visualizer pipeline) -------
+    pp = sub.add_parser(
+        "perform",
+        help="NEW: Muse -> Lyria RealTime music + Three.js shader visualizer.",
     )
-    pl.set_defaults(func=_cmd_list_midi)
-
-    pm = sub.add_parser(
-        "monitor-midi",
-        help="Live-display MIDI input on a port (sanity-check IAC bus without Logic open)",
-    )
-    pm.add_argument(
-        "--midi-port",
-        default=config.MIDI_PORT_NAME,
-        dest="midi_port",
-        help=f"MIDI input port name (default: {config.MIDI_PORT_NAME!r})",
-    )
-    pm.set_defaults(func=_cmd_monitor_midi)
-
-    ps = sub.add_parser(
-        "simulate",
+    pp.add_argument(
+        "--prompt",
+        default="",
         help=(
-            "Synthesize a brain (sine sweeps + periodic triggers) through the real "
-            "mapping/output pipeline. Headset-free testing of MIDI/OSC/viz paths."
+            "Session prompt. Drives both Lyria's stylistic basis and the seed "
+            "image used by the visualizer (e.g. 'downtempo electronic with "
+            "warm analog synth pads'). OPTIONAL since Phase 10: omit to type "
+            "the prompt in the browser and click Start manually."
         ),
     )
-    ps.add_argument(
-        "--backend",
-        choices=("midi", "osc", "both"),
-        default=config.OUTPUT_BACKEND,
-        help=f"Output backend (default: {config.OUTPUT_BACKEND})",
-    )
-    ps.add_argument(
-        "--midi-port",
-        default=config.MIDI_PORT_NAME,
-        dest="midi_port",
-        help=f"MIDI output port name (default: {config.MIDI_PORT_NAME!r})",
-    )
-    ps.add_argument(
-        "--osc-host",
-        default=config.OSC_HOST,
-        dest="osc_host",
-        help=f"DAW-side OSC host (default: {config.OSC_HOST})",
-    )
-    ps.add_argument(
-        "--osc-port",
+    pp.add_argument(
+        "--http-port",
         type=int,
-        default=config.OSC_PORT,
-        dest="osc_port",
-        help=f"DAW-side OSC port (default: {config.OSC_PORT})",
+        default=8000,
+        dest="http_port",
+        help="aiohttp server port (default: 8000)",
+    )
+    pp.add_argument(
+        "--no-browser",
+        action="store_true",
+        dest="no_browser",
+        help="Skip auto-launching Chrome to the visualizer URL.",
+    )
+    pp.add_argument(
+        "--simulate-eeg",
+        action="store_true",
+        dest="simulate_eeg",
+        help="Use synthetic EEG instead of opening the Muse 2 (headset-free dev).",
+    )
+    pp.add_argument(
+        "--no-lyria",
+        action="store_true",
+        dest="no_lyria",
+        help="Skip Lyria music generation (visual + EEG only; for visualizer dev).",
+    )
+    pp.add_argument(
+        "--no-server",
+        action="store_true",
+        dest="no_server",
+        help="Skip the aiohttp + WebSocket server (for headless EEG/Lyria dev).",
+    )
+    pp.add_argument(
+        "--no-tui",
+        action="store_true",
+        dest="no_tui",
+        help=(
+            "Disable the rich.Live status panel and fall back to a plain "
+            "'[state] alpha=...' log line every couple of seconds. Use when "
+            "piping output to a file or in a terminal that doesn't render "
+            "the panel cleanly."
+        ),
+    )
+    pp.add_argument(
+        "--skip-seed",
+        action="store_true",
+        dest="skip_seed",
+        help=(
+            "Skip Phase 8's Imagen seed image call. Saves ~3-5s of startup "
+            "wall time and avoids API quota usage; the visualizer will "
+            "fall back to whatever static/seed.png already exists from a "
+            "prior session, or render blank if there's none."
+        ),
+    )
+    pp.add_argument(
+        "--no-seed-cache",
+        action="store_true",
+        dest="no_seed_cache",
+        help=(
+            "Force re-generation of the seed image even if a cached PNG "
+            "exists for this prompt. Useful when iterating on the Imagen "
+            "model id or aspect ratio."
+        ),
+    )
+    pp.add_argument(
+        "--evolve-chunks",
+        type=int,
+        default=config.EVOLVE_INTERVAL_CHUNKS,
+        dest="evolve_chunks",
+        help=(
+            "Phase 10: regenerate the seed image every N Lyria audio "
+            "chunks (~2s of music each, so 12 chunks ≈ 24s) based on "
+            "how the EEG/audio features have moved. Pass 0 to disable. "
+            "Cost scales inversely with N: ~$3/hr at 12, ~$1.5/hr at 24 "
+            "(default: %(default)s)."
+        ),
+    )
+    pp.set_defaults(func=_cmd_perform)
+
+    # ------- simulate (synthetic EEG TUI) -------
+    ps = sub.add_parser(
+        "simulate",
+        help="Synthetic brain -> TUI (headset-free smoke test of the diagnostic UI).",
     )
     ps.add_argument(
         "--rate",
         type=float,
-        default=config.SEND_RATE_HZ,
-        help="Output messages per second",
+        default=30.0,
+        help="TUI refresh rate in Hz",
     )
     ps.add_argument(
         "--duration",
@@ -241,33 +231,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="Stop after N seconds (0 = run until Ctrl-C)",
     )
-    ps.add_argument(
-        "--viz",
-        action="store_true",
-        default=config.VIZ_ENABLED,
-        help="Also publish /viz/* OSC for the visual layer",
-    )
-    ps.add_argument(
-        "--viz-host",
-        default=config.VIZ_HOST,
-        dest="viz_host",
-        help=f"Viz OSC destination host (default: {config.VIZ_HOST})",
-    )
-    ps.add_argument(
-        "--viz-port",
-        type=int,
-        default=config.VIZ_PORT,
-        dest="viz_port",
-        help=f"Viz OSC destination UDP port (default: {config.VIZ_PORT})",
-    )
-    ps.add_argument(
-        "--viz-prompt-source",
-        choices=("auto", "manual", "mix"),
-        default=config.VIZ_PROMPT_SOURCE_DEFAULT,
-        dest="viz_prompt_source",
-        help=f"Initial sidecar prompt source (default: {config.VIZ_PROMPT_SOURCE_DEFAULT})",
-    )
     ps.set_defaults(func=_cmd_simulate)
+
+    # ------- battery -------
+    pb = sub.add_parser(
+        "battery",
+        help="Connect briefly to the Muse 2 and print its battery percentage.",
+    )
+    pb.set_defaults(func=_cmd_battery)
+
+    # ------- bt-reset -------
+    pbt = sub.add_parser(
+        "bt-reset",
+        help=(
+            "Cycle macOS Bluetooth to recover from a stuck BLE state "
+            "(use after a Ctrl-C-killed run that won't reconnect)."
+        ),
+    )
+    pbt.set_defaults(func=_cmd_bt_reset)
 
     return p
 
