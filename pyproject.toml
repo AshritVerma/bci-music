@@ -23,6 +23,7 @@ dev = ["ruff>=0.4"]
 tui = ["rich>=13"]
 
 [project.scripts]
+muse2 = "muse2_music_lab.cli:main"
 muse2-music = "muse2_music_lab.cli:main"
 
 [tool.setuptools.packages.find]
