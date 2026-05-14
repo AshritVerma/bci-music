@@ -146,15 +146,29 @@
         with Lyria + Imagen. Click to fill the textarea (does NOT auto-
         start) so the operator can edit before committing. Picked to span
         the stylistic range the model handles well so the audience sees
-        breadth on repeated demos.
+        breadth on repeated demos. Order roughly: chill -> driving ->
+        cinematic -> textural, so a casual reader scans top-to-bottom
+        and finds a vibe that matches their mood.
       -->
       <div class="start-suggestions" aria-label="Suggested prompts">
-        <span class="start-suggestions-label">try:</span>
-        <button type="button" class="prompt-chip" data-prompt="warm ambient drone with crystalline texture and a gentle pulse">ambient drone</button>
-        <button type="button" class="prompt-chip" data-prompt="downtempo electronic with warm analog synth pads, slow 4-on-the-floor kick">downtempo electronic</button>
-        <button type="button" class="prompt-chip" data-prompt="dreamy lo-fi hip-hop with vinyl crackle, mellow rhodes piano, soft brushed snare">lo-fi hip-hop</button>
-        <button type="button" class="prompt-chip" data-prompt="psychedelic post-rock with shimmering reverb-soaked guitars and slow-building drums">psychedelic post-rock</button>
-        <button type="button" class="prompt-chip" data-prompt="bright minimal techno, hypnotic 16th-note bassline, crisp hi-hats, occasional analog bleeps">minimal techno</button>
+        <div class="start-suggestions-header">
+          <span class="start-suggestions-title">Need a starting point?</span>
+          <span class="start-suggestions-hint">Tap a chip to fill the box, then edit or just hit Start.</span>
+        </div>
+        <div class="start-suggestions-chips">
+          <button type="button" class="prompt-chip" data-prompt="warm ambient drone with crystalline texture and a gentle pulse">ambient drone</button>
+          <button type="button" class="prompt-chip" data-prompt="dreamy lo-fi hip-hop with vinyl crackle, mellow rhodes piano, soft brushed snare">lo-fi hip-hop</button>
+          <button type="button" class="prompt-chip" data-prompt="downtempo electronic with warm analog synth pads, slow 4-on-the-floor kick">downtempo electronic</button>
+          <button type="button" class="prompt-chip" data-prompt="atmospheric trip-hop with deep sub bass, jazzy chords, and dusty drum breaks">trip-hop</button>
+          <button type="button" class="prompt-chip" data-prompt="warm chillwave with hazy synth pads, gated reverb snare, slow nostalgic melody">chillwave</button>
+          <button type="button" class="prompt-chip" data-prompt="bright minimal techno, hypnotic 16th-note bassline, crisp hi-hats, occasional analog bleeps">minimal techno</button>
+          <button type="button" class="prompt-chip" data-prompt="driving synthwave with retro analog leads, gated drums, and arpeggiated bass">synthwave</button>
+          <button type="button" class="prompt-chip" data-prompt="afrobeat groove with tight percussion, electric piano stabs, and a punchy bassline">afrobeat</button>
+          <button type="button" class="prompt-chip" data-prompt="cinematic orchestral with sweeping strings, soft piano, and a slow rising swell">cinematic orchestral</button>
+          <button type="button" class="prompt-chip" data-prompt="psychedelic post-rock with shimmering reverb-soaked guitars and slow-building drums">psychedelic post-rock</button>
+          <button type="button" class="prompt-chip" data-prompt="shoegaze dream pop with washed-out guitars, breathy pads, and steady kick">shoegaze</button>
+          <button type="button" class="prompt-chip" data-prompt="smooth jazz fusion with warm electric piano, brushed drums, and a soulful bassline">jazz fusion</button>
+        </div>
       </div>
       <div id="start-status" class="start-status"></div>
     </div>

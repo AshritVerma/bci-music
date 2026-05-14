@@ -675,40 +675,61 @@ body.hud-hidden #hud-toggle {
 }
 
 /* ---- demo-tested prompt suggestions (Start panel) ----
-   Small chips below the textarea. Click to fill the input without
-   auto-starting, so the operator can edit. Designed to take ONE row
-   on a wide screen and wrap gracefully on narrower ones (smaller
-   demo monitors / projector mode). */
+   A header row ("Need a starting point?" + small hint) sits above a
+   wrapping flex of chips. Click any chip to fill the textarea (does
+   NOT auto-start, so the operator can edit before committing).
+   Designed to take 2-3 rows of chips at the typical demo-laptop
+   width and wrap gracefully on smaller screens (projector / vertical
+   side-monitor) without crowding the Start button.
+
+   Subtle border-top above the section visually separates it from
+   the input, signaling "these are optional / browse if curious". */
 .start-suggestions {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(120, 140, 160, 0.18);
+}
+.start-suggestions-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 12px;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.start-suggestions-title {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  font-weight: 500;
+}
+.start-suggestions-hint {
   font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: lowercase;
+  letter-spacing: 0.02em;
   color: var(--muted);
 }
-.start-suggestions-label {
-  margin-right: 4px;
-  color: rgba(154, 166, 178, 0.7);
+.start-suggestions-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .prompt-chip {
   background: rgba(15, 19, 24, 0.6);
   border: 1px solid var(--line);
   color: var(--label);
   font-family: inherit;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  padding: 4px 10px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  padding: 5px 11px;
   border-radius: 999px;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease,
+              color 0.12s ease, transform 0.05s ease;
+  white-space: nowrap;
 }
 .prompt-chip:hover {
-  background: rgba(95, 193, 255, 0.12);
-  border-color: rgba(95, 193, 255, 0.45);
+  background: rgba(95, 193, 255, 0.14);
+  border-color: rgba(95, 193, 255, 0.55);
   color: var(--accent);
 }
 .prompt-chip:active {
