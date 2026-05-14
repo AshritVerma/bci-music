@@ -1,0 +1,449 @@
+/* Phase 9 styling.
+   Three.js renders into #viz-canvas at the back of the stacking
+   context (z-index: 0, fixed full-viewport). The HUD (header + main +
+   footer) sits on top with semi-transparent panel backgrounds so the
+   visualizer remains visible behind them.
+
+   Toggle: body.hud-hidden hides the header/main/footer with a fade. */
+
+:root {
+  --bg: #0a0d10;
+  --panel-bg: rgba(15, 19, 24, 0.66);
+  --panel-bg-strong: rgba(10, 14, 18, 0.85);
+  --line: rgba(120, 140, 160, 0.18);
+  --text: #eaecef;
+  --muted: #9aa6b2;
+  --label: #9bb5d4;
+  --accent: #5fc1ff;
+  --warn: #f0a830;
+  --bad: #ff6f72;
+  --good: #7ed98a;
+  --bar-bg: rgba(0, 0, 0, 0.45);
+  --bar-fill: linear-gradient(90deg, #6ec77a 0%, #4fb6ff 60%, #b27dff 100%);
+  --bar-fill-trigger: linear-gradient(90deg, #4fb6ff 0%, #f0a830 100%);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.4;
+  height: 100%;
+  overflow: hidden;       /* page itself never scrolls -- canvas is full-viewport */
+}
+
+/* ---- background visualizer canvas ---- */
+#viz-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  display: block;
+  background: #000;
+}
+
+/* ---- HUD overlay (header + main + footer) ---- */
+header, main, footer {
+  position: relative;
+  z-index: 2;
+  /* Crisper text on top of busy shader output. */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: var(--panel-bg-strong);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+header h1 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+.status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.conn {
+  cursor: default;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+/* Phase 10: more pill states for the Muse-band indicator. The WS pill
+   only ever flips good/bad; the Muse pill walks through several
+   intermediate states (searching/found/connected/lost/reconnecting/
+   simulated/failed). Keep the dot + label format identical to the WS
+   one so a glance reads as a single tidy column. */
+.conn-good       { color: var(--good); }
+.conn-bad        { color: var(--bad); }
+.conn-warn       { color: var(--warn); }
+.conn-idle       { color: var(--muted); }
+.conn::before { content: "●"; margin-right: 6px; }
+.rate { font-variant-numeric: tabular-nums; }
+.prompt {
+  max-width: 35vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--label);
+}
+
+#hud-toggle,
+.header-btn {
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+#hud-toggle:hover,
+.header-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+.header-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.header-btn-danger {
+  border-color: rgba(255, 111, 114, 0.45);
+  color: #ffb4b6;
+}
+.header-btn-danger:hover:not(:disabled) {
+  background: rgba(255, 111, 114, 0.12);
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+/* Phase 10 EEG-mode toggle: the label is descriptive ("EEG: simulated
+   -> use real") so it's wider than the other header buttons. Lock a
+   min-width so the "Switching..." mid-state doesn't shrink the header
+   and reflow everything next to it. Lowercase reads better here than
+   the default uppercase since the label encodes a mode value. */
+#eeg-mode-btn {
+  min-width: 220px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+}
+
+/* ---- main HUD grid: bottom-anchored, 4 panels in a row ---- */
+main {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 36px;        /* leave room for the footer */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  pointer-events: none;  /* let mouse fall through to the visualizer behind */
+}
+main > * { pointer-events: auto; }
+
+.panel {
+  background: var(--panel-bg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px 8px;
+}
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 80px 56px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.label { color: var(--label); }
+.value { color: var(--text); text-align: right; }
+.value.dot { font-size: 14px; color: var(--muted); }
+
+.bar {
+  position: relative;
+  background: var(--bar-bg);
+  height: 10px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.bar.muted {
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  padding-left: 4px;
+  align-self: center;
+  height: auto;
+  border: none;
+}
+
+.fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 0%;
+  background: var(--bar-fill);
+  transition: width 80ms linear;
+}
+
+.bar.centered .fill-center {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 0%;
+  background: var(--accent);
+}
+.bar.centered .midline {
+  position: absolute;
+  left: calc(50% - 1px);
+  top: 0; bottom: 0;
+  width: 2px;
+  background: var(--muted);
+  opacity: 0.6;
+}
+
+.row.trigger.fired .value.dot {
+  color: var(--warn);
+  font-weight: 700;
+  text-shadow: 0 0 6px var(--warn);
+}
+.row.trigger.fired .fill {
+  background: var(--bar-fill-trigger);
+}
+
+footer {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  padding: 6px 20px;
+  background: var(--panel-bg-strong);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+footer kbd {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 5px;
+  font-family: inherit;
+  font-size: 10px;
+}
+
+/* ---- HUD toggle: hide header / main / footer with a smooth fade ---- */
+header, main, footer { transition: opacity 180ms ease, visibility 180ms ease; }
+body.hud-hidden header,
+body.hud-hidden main,
+body.hud-hidden footer {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* The toggle button itself stays clickable so the user can show
+   the HUD again. Park it as a small floating chip in the top right. */
+body.hud-hidden #hud-toggle {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 5;
+  visibility: visible;
+  opacity: 0.85;
+}
+
+/* ===================================================================
+   Phase 10: centered Start panel
+   ------------------------------------------------------------------- */
+/* The Start panel is the first thing the user sees on a fresh session.
+   It's centered in the viewport above the visualizer and below the
+   header. Once Start is clicked it fades out and the HUD takes over.
+   The textarea + send-button overlay pattern mimics ChatGPT's input. */
+
+.start-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  pointer-events: none;
+  transition: opacity 280ms ease, visibility 280ms ease;
+}
+.start-panel > * { pointer-events: auto; }
+.start-panel.hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.start-card {
+  width: min(640px, 92vw);
+  background: var(--panel-bg-strong);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px 22px 18px;
+  box-shadow: 0 12px 38px rgba(0, 0, 0, 0.55);
+}
+
+.start-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+.start-sub {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* Wrapper anchors the absolutely-positioned send button to the
+   bottom-right of the textarea -- ChatGPT-style. */
+.start-input-wrap {
+  position: relative;
+  display: flex;
+}
+.start-prompt {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  padding: 12px 92px 12px 14px;  /* right padding leaves room for the Start button */
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.start-prompt::placeholder { color: rgba(154, 166, 178, 0.55); }
+.start-prompt:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(95, 193, 255, 0.35);
+}
+
+.start-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--accent);
+  color: #08151f;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 120ms ease, transform 60ms ease, opacity 120ms ease;
+}
+.start-btn:hover:not(:disabled) { background: #7fcfff; }
+.start-btn:active:not(:disabled) { transform: translateY(1px); }
+.start-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.start-btn-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 0 4px;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.start-status {
+  margin-top: 10px;
+  min-height: 16px;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.start-status.error { color: var(--bad); }
+.start-status.info  { color: var(--accent); }
+
+/* ===================================================================
+   Phase 10: session-ended overlay
+   -------------------------------------------------------------------
+   Shown after the operator clicks Quit (or the perform process exits
+   any other way). Sits above EVERYTHING -- HUD, Start panel, header --
+   to make it unambiguous that the session is over. */
+
+.ended-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 12, 16, 0.7);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.ended-overlay[hidden] { display: none; }
+.ended-card {
+  background: var(--panel-bg-strong);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 22px 28px;
+  text-align: center;
+  box-shadow: 0 12px 38px rgba(0, 0, 0, 0.55);
+}
+.ended-card h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+.ended-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}

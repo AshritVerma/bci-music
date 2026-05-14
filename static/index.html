@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>brain music</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!--
+    Phase 9: full-viewport background canvas. Three.js renders the
+    EEG/audio-driven shader into here. The HUD <main> below is
+    absolutely positioned on top with semi-transparent panels.
+  -->
+  <canvas id="viz-canvas"></canvas>
+
+  <header>
+    <h1>brain music</h1>
+    <div class="status">
+      <!--
+        Phase 10 control surface: two passive status pills (Muse +
+        WebSocket), then the live BPM rate, then the active prompt,
+        then three control buttons. The Muse pill mirrors the WS one
+        so a glance at the top-right tells you the entire health of
+        the pipeline. Recalibrate / Quit are click-equivalents of the
+        terminal hotkeys.
+      -->
+      <span
+        id="muse"
+        class="conn conn-idle"
+        title="Muse 2 EEG link state. Green = streaming features. Amber = simulated EEG. Red = lost / failed. Mirrors the [eeg] log lines in the perform terminal."
+      >Muse: idle</span>
+      <button
+        id="eeg-mode-btn"
+        class="header-btn"
+        type="button"
+        title="Switch the EEG source between the live Muse 2 headset and a synthetic generator. Useful for demoing without a band, or for falling back if the headset connection fails."
+      >EEG: ?</button>
+      <span
+        id="conn"
+        class="conn conn-bad"
+        title="WebSocket connection to the muse2 perform server. Auto-reconnects every few seconds while the page is open. Red means the perform process isn't running, or the page is between reconnect attempts."
+      >WS: disconnected</span>
+      <span id="rate" class="rate">— Hz</span>
+      <span id="prompt" class="prompt"></span>
+      <button
+        id="recalibrate-btn"
+        class="header-btn"
+        type="button"
+        disabled
+        title="Re-run the 8-second EEG baseline capture. Disabled until the band is connected; no-op on simulated EEG."
+      >Recalibrate</button>
+      <button
+        id="quit-btn"
+        class="header-btn header-btn-danger"
+        type="button"
+        title="Stop the perform process gracefully. Same as pressing 'q' + Enter in the terminal."
+      >Quit</button>
+      <button
+        id="hud-toggle"
+        type="button"
+        title="Toggle the diagnostic HUD overlay (or press 'h')"
+      >hide HUD</button>
+    </div>
+  </header>
+
+  <!--
+    Phase 10 Start panel. Visible until the user clicks Start (or until
+    state.lyria_started arrives true from the WS, whichever comes first
+    -- handles the case where another browser session already started
+    the same perform process). The textarea + send-button overlay
+    pattern mimics ChatGPT's input affordance: Enter submits,
+    Shift+Enter adds a newline.
+  -->
+  <div id="start-panel" class="start-panel" aria-hidden="false">
+    <div class="start-card">
+      <h2 class="start-title">Set the session prompt</h2>
+      <p class="start-sub">
+        One prompt drives both the music (Lyria RealTime) and the visuals
+        (Imagen seed image). Your brain modulates both from there.
+      </p>
+      <div class="start-input-wrap">
+        <textarea
+          id="start-prompt"
+          class="start-prompt"
+          rows="2"
+          placeholder="e.g. warm ambient drone with crystalline texture"
+          autofocus
+        ></textarea>
+        <button
+          id="start-btn"
+          class="start-btn"
+          type="button"
+          disabled
+          title="Start the session (Enter)"
+          aria-label="Start session"
+        >
+          <span class="start-btn-label">Start</span>
+          <span class="start-btn-key">↵</span>
+        </button>
+      </div>
+      <div id="start-status" class="start-status"></div>
+    </div>
+  </div>
+
+  <!--
+    Phase 10 session-ended overlay. Hidden by default; shown only after
+    the user clicks Quit (or the perform process exits any other way).
+    Suppresses the WS auto-reconnect loop so the page doesn't spam
+    failed reconnect attempts at a now-dead server.
+  -->
+  <div id="ended-overlay" class="ended-overlay" hidden>
+    <div class="ended-card">
+      <h2>Session ended</h2>
+      <p>The perform process has exited. You can close this tab.</p>
+    </div>
+  </div>
+
+  <main>
+    <section class="panel">
+      <h2>EEG</h2>
+      <div class="row" data-key="alpha">
+        <span class="label">alpha</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
+      </div>
+      <div class="row" data-key="beta">
+        <span class="label">beta</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
+      </div>
+      <div class="row" data-key="theta">
+        <span class="label">theta</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
+      </div>
+      <div class="row" data-key="asymmetry">
+        <span class="label">asymmetry</span><span class="value">0.50</span><span class="bar centered"><span class="fill-center"></span><span class="midline"></span></span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Triggers</h2>
+      <div class="row trigger" data-key="blink">
+        <span class="label">blink</span><span class="value dot">·</span><span class="bar"><span class="fill"></span></span>
+      </div>
+      <div class="row trigger" data-key="jaw">
+        <span class="label">jaw</span><span class="value dot">·</span><span class="bar"><span class="fill"></span></span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Lyria</h2>
+      <div class="row" data-key="lyria.bpm">
+        <span class="label">bpm</span><span class="value">—</span><span class="bar"><span class="fill"></span></span>
+      </div>
+      <div class="row" data-key="lyria.density">
+        <span class="label">density</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
+      </div>
+      <div class="row" data-key="lyria.brightness">
+        <span class="label">brightness</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
+      </div>
+      <div class="row" data-key="lyria.temperature">
+        <span class="label">temperature</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
+      </div>
+      <div class="row" data-key="lyria.chunks">
+        <span class="label">chunks</span><span class="value">0</span><span class="bar muted">streamed</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Audio</h2>
+      <div class="row" data-key="rms">
+        <span class="label">rms</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
+      </div>
+      <div class="row" data-key="centroid">
+        <span class="label">centroid</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
+      </div>
+      <div class="row" data-key="onset">
+        <span class="label">onset</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Phase 9 visualizer · press <kbd>h</kbd> to toggle HUD</span>
+  </footer>
+
+  <!--
+    Visualizer is an ES module (uses `import`); app.js stays a
+    classic script tag for backwards compat with the simple WS
+    plumbing. They communicate via window.visualizer.{setTargets,
+    refreshSeed} -- one-way calls from app.js into the visualizer.
+  -->
+  <script type="module" src="/static/visualizer.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
