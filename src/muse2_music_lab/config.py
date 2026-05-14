@@ -98,13 +98,21 @@ LYRIA_DEFAULT_BRIGHTNESS: float = 0.5
 LYRIA_DEFAULT_TEMPERATURE: float = 1.1
 
 # EEG -> Lyria mapping ranges. Each AppState feature is in [0, 1], and we
-# map it linearly into the corresponding Lyria parameter range. Tuned to
-# stay inside Lyria's "musical" envelope -- pushed too far on temperature
-# or bpm and the model degenerates into noise / metronome ticks.
-LYRIA_BPM_MIN: int = 60                # asymmetry=0 (left-frontal lean)
-LYRIA_BPM_MAX: int = 140               # asymmetry=1 (right-frontal lean)
-LYRIA_TEMPERATURE_MIN: float = 0.6     # theta=0 (alert / drowsy off)
-LYRIA_TEMPERATURE_MAX: float = 1.8     # theta=1 (drowsy / dreamy on)
+# map it (after the SENSITIVITY_GAIN expansion below) linearly into the
+# corresponding Lyria parameter range.
+#
+# Tradeoff: ranges that are too narrow waste Lyria's musical envelope
+# (the brain has to push hard to reach an audibly different state);
+# ranges that are too wide let the model degenerate into noise (very
+# high temperature) or unmusical metronome ticks (BPM extremes).
+# Widened from the original 60-140 / 0.6-1.8 alongside the gain bump
+# so saturating the curve actually reaches a noticeably-different
+# musical state instead of just clipping at a "still kind of normal"
+# value.
+LYRIA_BPM_MIN: int = 55                # asymmetry=0 (left-frontal lean)
+LYRIA_BPM_MAX: int = 160               # asymmetry=1 (right-frontal lean)
+LYRIA_TEMPERATURE_MIN: float = 0.5     # theta=0 (alert / drowsy off)
+LYRIA_TEMPERATURE_MAX: float = 1.9     # theta=1 (drowsy / dreamy on)
 
 # How aggressively EEG deviations from the neutral 0.5 midpoint amplify
 # into Lyria control changes. The mapping in lyria/mapping.py rewrites
@@ -306,7 +314,16 @@ EVOLVE_CROSSFADE_S: float = 6.0
 # Smoothing / normalization
 # ---------------------------------------------------------------------------
 
-SMOOTHING_ALPHA: float = 0.2        # EMA weight (lower = smoother, more lag)
+# EMA weight for the EEG features (alpha/beta/theta/asymmetry) inside
+# the brainflow loop. Lower = smoother + laggier. Bumped 0.20 -> 0.30
+# alongside the LYRIA_SENSITIVITY_GAIN work: the gain amplifies whatever
+# arrives at the mapping, so a heavily-smoothed feature stream produces
+# an expressive-but-laggy music response. With alpha=0.30 the effective
+# time constant drops from ~5 ticks (~1.25 s @ 4 Hz) to ~3 ticks
+# (~0.75 s), which is short enough that voluntary focus / eye-close
+# transitions are heard within the first second, but long enough that
+# 1-tick noise spikes don't clip Lyria's BPM up and down.
+SMOOTHING_ALPHA: float = 0.3
 
 
 # ---------------------------------------------------------------------------
