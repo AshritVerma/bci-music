@@ -1,35 +1,60 @@
-"""Live terminal UI for the brain → DAW pipeline.
+"""Live terminal UI for EEG diagnostics.
 
-Requires the `tui` extra (rich). Shows a continuously updating table of
-feature values with their mapping targets and calibration status. Press
-`r` + Enter to re-calibrate without restarting.
+Used by both `muse2-music run` (real Muse 2 over BLE) and `muse2-music
+simulate` (synthetic brain). Shows a continuously updating table of feature
+values with calibration status. Press `r` + Enter to re-calibrate without
+restarting; `q` + Enter to quit.
+
+This is the legacy diagnostic surface kept after the Phase 0 cleanup. It does
+not produce any music or visual output -- that's `muse2-music perform`.
 """
 
 from __future__ import annotations
 
+import signal
 import sys
 import threading
 import time
-from typing import Optional
+from dataclasses import dataclass
+from typing import Iterator, Optional, Tuple
 
+import numpy as np
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
-from rich.text import Text
 
-from muse2_music_lab import config, mapping
-from muse2_music_lab.board import Board
-from muse2_music_lab.features import (
+from muse2_music_lab import config
+from muse2_music_lab.eeg.board import Board, BoardInfo
+from muse2_music_lab.eeg.features import (
     BlinkDetector,
     JawClenchDetector,
+    FeatureFrame,
     compute_frame,
 )
-from muse2_music_lab.main import RunOptions, _calibrate, _open_backends
-from muse2_music_lab.smoother import EMA, Normalizer
+from muse2_music_lab.eeg.smoother import Baseline, Calibrator, EMA, Normalizer
+
+
+CONTINUOUS_NAMES: tuple[str, ...] = ("focus", "calm", "alpha", "beta", "theta")
+PULSE_NAMES: tuple[str, ...] = ("blink", "jaw")
+
+
+@dataclass
+class RunOptions:
+    """Tunables for the live `run` flow."""
+
+    calibrate_seconds: float = config.CALIBRATION_DURATION
+    send_rate_hz: float = config.SEND_RATE_HZ
+    window_size: int = config.WINDOW_SIZE
+    smoothing_alpha: float = config.SMOOTHING_ALPHA
+
+
+# ---------------------------------------------------------------------------
+# Stdin keyboard shortcuts
+# ---------------------------------------------------------------------------
 
 
 class _StdinReader(threading.Thread):
-    """Background thread that sets a recalibrate flag when the user types 'r'."""
+    """Background thread: 'r' = recalibrate, 'q' = quit."""
 
     def __init__(self) -> None:
         super().__init__(daemon=True)
@@ -55,14 +80,18 @@ class _StdinReader(threading.Thread):
         self._stop = True
 
 
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+
+
 def _bar(value: float, width: int = 20) -> str:
     v = max(0.0, min(1.0, float(value)))
     filled = int(round(v * width))
     return "█" * filled + "░" * (width - filled)
 
 
-def _trigger_meter(name: str, triggered: bool, live_uv: float, threshold_uv: float) -> str:
-    """Show live amplitude vs threshold for pulse-type signals."""
+def _trigger_meter(triggered: bool, live_uv: float, threshold_uv: float) -> str:
     if triggered:
         return f"[bold]FIRED[/bold]  ({live_uv:.0f}μV / thr {threshold_uv:.0f})"
     ratio = live_uv / threshold_uv if threshold_uv > 0 else 0.0
@@ -70,102 +99,142 @@ def _trigger_meter(name: str, triggered: bool, live_uv: float, threshold_uv: flo
     return f"{bar} {live_uv:6.0f}μV / thr {threshold_uv:.0f}"
 
 
-def _render_table(
+def render_table(
     values: dict[str, float],
     triggers: dict[str, bool],
-    baselines_known: bool,
-    sr: int,
+    title: str,
     blink_ptp_uv: float = 0.0,
     jaw_rms_uv: float = 0.0,
+    *,
+    calibrated: bool = True,
+    show_keys_help: bool = True,
 ) -> Table:
-    table = Table(
-        title=f"muse2-music · {sr} Hz · {config.OUTPUT_BACKEND.upper()}",
-        expand=True,
-    )
+    """Build the live table. Shared by `run` (real EEG) and `simulate`."""
+    table = Table(title=title, expand=True)
     table.add_column("Signal", style="bold", no_wrap=True)
     table.add_column("Value", no_wrap=True)
     table.add_column("Meter", no_wrap=True)
-    table.add_column("Mapping", no_wrap=True)
 
-    for name, spec in mapping.MAPPINGS.items():
-        route_str = f"ch{spec['channel']} cc{spec['cc']}   {spec['osc']}"
-        if spec["type"] == "cc":
-            v = values.get(name, 0.0)
-            value_text = f"{v:.2f}"
-            meter = _bar(v)
+    for name in CONTINUOUS_NAMES:
+        v = values.get(name, 0.0)
+        table.add_row(name, f"{v:.2f}", _bar(v))
+
+    for name in PULSE_NAMES:
+        triggered = triggers.get(name, False)
+        value_text = "●" if triggered else "·"
+        if name == "blink":
+            meter = _trigger_meter(
+                triggered, blink_ptp_uv, config.BLINK_THRESHOLD_UV
+            )
         else:
-            triggered = triggers.get(name, False)
-            value_text = "●" if triggered else "·"
-            if name == "blink":
-                meter = _trigger_meter(
-                    name, triggered, blink_ptp_uv, config.BLINK_THRESHOLD_UV
-                )
-            elif name == "jaw":
-                meter = _trigger_meter(
-                    name, triggered, jaw_rms_uv, config.JAW_THRESHOLD_UV
-                )
-            else:
-                meter = "[bold]FIRED[/bold]" if triggered else ""
-        table.add_row(name, value_text, meter, route_str)
+            meter = _trigger_meter(
+                triggered, jaw_rms_uv, config.JAW_THRESHOLD_UV
+            )
+        table.add_row(name, value_text, meter)
 
-    status = "calibrated" if baselines_known else "not calibrated"
-    table.caption = (
-        f"[{status}]   press 'r'+Enter to re-calibrate   'q'+Enter to quit"
-    )
+    status = "calibrated" if calibrated else "not calibrated"
+    if show_keys_help:
+        table.caption = (
+            f"[{status}]   press 'r'+Enter to re-calibrate   'q'+Enter to quit"
+        )
+    else:
+        table.caption = f"[{status}]"
     return table
 
 
+# ---------------------------------------------------------------------------
+# Real-board acquisition + calibration
+# ---------------------------------------------------------------------------
+
+
+def _wait_for_window(board: Board, window_size: int, timeout_s: float = 10.0) -> np.ndarray:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        w = board.get_window(window_size)
+        if w.shape[1] >= window_size:
+            return w
+        time.sleep(0.05)
+    raise TimeoutError(
+        f"Timed out waiting for {window_size} samples from the board."
+    )
+
+
+def _calibrate(
+    board: Board,
+    sampling_rate: int,
+    blink: BlinkDetector,
+    jaw: JawClenchDetector,
+    opts: RunOptions,
+) -> Normalizer:
+    print(
+        f"[calib] Sit still and relax with eyes open for "
+        f"{opts.calibrate_seconds:.1f}s...",
+        flush=True,
+    )
+    _wait_for_window(board, opts.window_size)
+
+    calibrator = Calibrator(names=("alpha", "beta", "theta", "focus", "calm"))
+    interval = 1.0 / max(opts.send_rate_hz, 1.0)
+    end = time.monotonic() + opts.calibrate_seconds
+    while time.monotonic() < end:
+        window = board.get_window(opts.window_size)
+        if window.shape[1] < opts.window_size:
+            time.sleep(interval)
+            continue
+        frame = compute_frame(window, sampling_rate, blink, jaw)
+        calibrator.add(frame.continuous())
+        time.sleep(interval)
+
+    norm = Normalizer(calibrator.finish())
+    print("[calib] Baseline captured:")
+    for name, base in norm.baselines.items():
+        print(f"        {name:<6} mean={base.mean:.3f}  std={base.std:.3f}")
+    return norm
+
+
+# ---------------------------------------------------------------------------
+# Live `run` flow (real Muse 2)
+# ---------------------------------------------------------------------------
+
+
 def run_with_tui(opts: Optional[RunOptions] = None) -> int:
+    """Connect to a real Muse 2 and drive the TUI loop."""
     opts = opts or RunOptions()
     console = Console()
-
-    console.print("Brain mapping:")
-    console.print(Text(mapping.describe()))
-
-    midi, osc = _open_backends(opts)
 
     board = Board()
     try:
         info = board.start()
     except Exception as e:
         console.print(f"[red]Board failed to start:[/red] {e}")
-        if midi is not None:
-            midi.close()
-        if osc is not None:
-            osc.close()
         return 2
 
     blink = BlinkDetector()
     jaw = JawClenchDetector(sampling_rate=info.sampling_rate)
+    emas = {n: EMA(alpha=opts.smoothing_alpha) for n in CONTINUOUS_NAMES}
 
-    emas = {name: EMA(alpha=opts.smoothing_alpha) for name in mapping.CONTINUOUS_NAMES}
-    normalizer: Normalizer
     try:
         normalizer = _calibrate(board, info.sampling_rate, blink, jaw, opts)
     except Exception as e:
         console.print(f"[red]Calibration failed:[/red] {e}")
         board.stop()
-        if midi is not None:
-            midi.close()
-        if osc is not None:
-            osc.close()
         return 3
 
     reader = _StdinReader()
     reader.start()
 
+    title = f"muse2-music run · {info.sampling_rate} Hz · TUI diagnostics"
     interval = 1.0 / max(opts.send_rate_hz, 1.0)
     next_tick = time.monotonic()
-    latest_values: dict[str, float] = {n: 0.0 for n in mapping.CONTINUOUS_NAMES}
-    latest_triggers: dict[str, bool] = {n: False for n in mapping.PULSE_NAMES}
+    latest_values: dict[str, float] = {n: 0.0 for n in CONTINUOUS_NAMES}
+    latest_triggers: dict[str, bool] = {n: False for n in PULSE_NAMES}
 
     try:
         with Live(
-            _render_table(
+            render_table(
                 latest_values,
                 latest_triggers,
-                True,
-                info.sampling_rate,
+                title,
                 blink.last_ptp,
                 jaw.last_rms,
             ),
@@ -198,8 +267,8 @@ def run_with_tui(opts: Optional[RunOptions] = None) -> int:
 
                 frame = compute_frame(window, info.sampling_rate, blink, jaw)
 
-                normalized = {}
-                for name in mapping.CONTINUOUS_NAMES:
+                normalized: dict[str, float] = {}
+                for name in CONTINUOUS_NAMES:
                     raw = getattr(frame, name, 0.0)
                     smoothed = emas[name].update(float(raw))
                     normalized[name] = max(
@@ -208,14 +277,11 @@ def run_with_tui(opts: Optional[RunOptions] = None) -> int:
                 latest_values = normalized
                 latest_triggers = {"blink": frame.blink, "jaw": frame.jaw}
 
-                mapping.route(frame, normalized, midi=midi, osc=osc)
-
                 live.update(
-                    _render_table(
+                    render_table(
                         latest_values,
                         latest_triggers,
-                        True,
-                        info.sampling_rate,
+                        title,
                         blink.last_ptp,
                         jaw.last_rms,
                     )
@@ -225,9 +291,5 @@ def run_with_tui(opts: Optional[RunOptions] = None) -> int:
     finally:
         reader.stop()
         board.stop()
-        if midi is not None:
-            midi.close()
-        if osc is not None:
-            osc.close()
         console.print("\n[exit] Stopped cleanly.")
     return 0
