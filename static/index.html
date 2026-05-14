@@ -99,6 +99,21 @@
           <span class="start-btn-key">↵</span>
         </button>
       </div>
+      <!--
+        Demo-tested prompt chips. Each one has been validated end-to-end
+        with Lyria + Imagen. Click to fill the textarea (does NOT auto-
+        start) so the operator can edit before committing. Picked to span
+        the stylistic range the model handles well so the audience sees
+        breadth on repeated demos.
+      -->
+      <div class="start-suggestions" aria-label="Suggested prompts">
+        <span class="start-suggestions-label">try:</span>
+        <button type="button" class="prompt-chip" data-prompt="warm ambient drone with crystalline texture and a gentle pulse">ambient drone</button>
+        <button type="button" class="prompt-chip" data-prompt="downtempo electronic with warm analog synth pads, slow 4-on-the-floor kick">downtempo electronic</button>
+        <button type="button" class="prompt-chip" data-prompt="dreamy lo-fi hip-hop with vinyl crackle, mellow rhodes piano, soft brushed snare">lo-fi hip-hop</button>
+        <button type="button" class="prompt-chip" data-prompt="psychedelic post-rock with shimmering reverb-soaked guitars and slow-building drums">psychedelic post-rock</button>
+        <button type="button" class="prompt-chip" data-prompt="bright minimal techno, hypnotic 16th-note bassline, crisp hi-hats, occasional analog bleeps">minimal techno</button>
+      </div>
       <div id="start-status" class="start-status"></div>
     </div>
   </div>

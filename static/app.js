@@ -302,6 +302,21 @@
     setStartStatus("");
     refreshStartButton();
   });
+  // Demo-tested prompt chips: click to fill the textarea (does NOT
+  // auto-start). The operator can hit Enter / click Start once they
+  // see the value populated, or edit it first.
+  document.querySelectorAll(".prompt-chip[data-prompt]").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const text = chip.dataset.prompt || "";
+      els.startPrompt.value = text;
+      els.startPrompt.focus();
+      // Drop the cursor at the end so a quick edit at the tail of the
+      // prompt is one keystroke away.
+      els.startPrompt.setSelectionRange(text.length, text.length);
+      setStartStatus("");
+      refreshStartButton();
+    });
+  });
   // Enter submits, Shift+Enter inserts a newline. Mirrors ChatGPT.
   els.startPrompt.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
