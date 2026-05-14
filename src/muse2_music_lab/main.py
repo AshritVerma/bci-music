@@ -79,6 +79,13 @@ class PerformOptions:
     # of music (each chunk ≈ 2s, so 12 chunks ≈ 24s). 0 disables.
     # Cost ~$3/hr at the default 12-chunk cadence.
     evolve_chunks: int = config.EVOLVE_INTERVAL_CHUNKS
+    # Cloud / Railway mode: forces simulated EEG, no local sounddevice
+    # output (audio fans out to browsers as binary WS frames instead),
+    # no auto-browser, no TUI, binds to 0.0.0.0 so the PaaS can route
+    # external traffic, locks per-visitor controls (Quit / EEG mode
+    # toggle) so a single visitor can't break the experience for
+    # everyone else.
+    cloud: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +207,43 @@ async def _keyboard_listener(
         raise
 
 
+async def _cloud_audio_queue_drain(state: AppState) -> None:
+    """Cloud-mode replacement for run_audio_playback_loop.
+
+    In `--cloud` there's no sounddevice / no host audio device, so
+    nothing drains state.audio_queue (the playback queue). The Lyria
+    receive loop puts() into it with `await` -- which blocks
+    indefinitely if nothing reads -- so without this drain, Lyria
+    would back-pressure within ~3 seconds and stop generating.
+
+    The actual audio that reaches browsers comes from the SEPARATE
+    state.audio_broadcast_queue tee (drained by
+    server.audio_broadcast.run_audio_broadcast_loop). This drain
+    just discards the playback-queue copy.
+
+    We deliberately don't pace this by sleeping -- Lyria is the
+    pacing source (it generates real-time, ~one chunk per 0.5s of
+    music). Reading as fast as the queue produces is correct.
+    """
+    drained = 0
+    try:
+        await state.start_requested.wait()
+        print(
+            "[audio-drain] cloud mode: draining playback queue to /dev/null "
+            "(audio reaches visitors via WS broadcast)",
+            flush=True,
+        )
+        while True:
+            chunk = await state.audio_queue.get()
+            try:
+                drained += 1
+            finally:
+                state.audio_queue.task_done()
+    except asyncio.CancelledError:
+        print(f"[audio-drain] cancelled after {drained} chunks drained", flush=True)
+        raise
+
+
 async def _state_logger(
     state: AppState,
     period_s: float = config.PERFORM_LOG_PERIOD_S,
@@ -234,15 +278,19 @@ async def _state_logger(
 
 
 def _summarize_opts(opts: PerformOptions) -> None:
+    if opts.cloud:
+        print("[perform] CLOUD MODE      (--cloud forces simulated EEG, "
+              "WS audio broadcast, no TUI, no auto-browser)")
     if opts.prompt.strip():
         print(f"[perform] prompt:        {opts.prompt!r}  (auto-start)")
     else:
         print("[perform] prompt:        <none>  (browser will provide)")
     print(f"[perform] simulate_eeg:  {opts.simulate_eeg}")
     print(f"[perform] lyria:         {'OFF' if opts.no_lyria else 'ON'}")
+    bind_label = "0.0.0.0" if opts.cloud else "localhost"
     print(
         f"[perform] server:        "
-        f"{'OFF' if opts.no_server else f'ON (http://localhost:{opts.http_port}/)'}"
+        f"{'OFF' if opts.no_server else f'ON (http://{bind_label}:{opts.http_port}/)'}"
     )
     print(f"[perform] auto-browser:  {'NO' if opts.no_browser else 'YES'}")
     print(f"[perform] tui:           {'OFF (plain log)' if opts.no_tui else 'ON (rich live)'}")
@@ -315,9 +363,22 @@ def _spawn_tasks(
         tasks.append(asyncio.create_task(
             run_lyria_loop(state), name="lyria"
         ))
-        tasks.append(asyncio.create_task(
-            run_audio_playback_loop(state), name="audio-play"
-        ))
+        # Cloud deploys have no local audio device: skip sounddevice
+        # entirely. The Lyria session still tees PCM into
+        # audio_broadcast_queue, which the server's audio fan-out
+        # task (spawned inside run_server_loop when cloud_mode=True)
+        # ships to every browser as binary WS frames. The audio_queue
+        # itself still needs to be drained, otherwise the producer
+        # back-pressures forever -- the cloud_drain_task below does that.
+        if opts.cloud:
+            tasks.append(asyncio.create_task(
+                _cloud_audio_queue_drain(state),
+                name="audio-drain",
+            ))
+        else:
+            tasks.append(asyncio.create_task(
+                run_audio_playback_loop(state), name="audio-play"
+            ))
         # Phase 6: numpy FFT tap. Sibling consumer of the lossy
         # state.audio_analysis_queue (separate from audio_play's queue),
         # writes rms / centroid / onset into AppState at ~20 Hz.
@@ -331,10 +392,15 @@ def _spawn_tasks(
         # served from `static/` (gitignored except for index.html etc).
         # Phase 10: pass stop_evt so the browser's Quit button can
         # request a graceful shutdown of the whole pipeline.
+        # Cloud: server also binds 0.0.0.0 + spawns the audio fan-out.
         server_opts = ServerOptions(
             http_port=opts.http_port,
+            cloud_mode=opts.cloud,
+            # In cloud deploys, NEVER let any one visitor quit the
+            # process for everyone else (handler refuses) -- so don't
+            # even hand the stop_evt over.
             no_browser=opts.no_browser,
-            stop_evt=stop_evt,
+            stop_evt=None if opts.cloud else stop_evt,
         )
         tasks.append(asyncio.create_task(
             run_server_loop(state, server_opts), name="server"
@@ -408,6 +474,22 @@ async def _wait_for_shutdown(
 
 
 async def _run_async(opts: PerformOptions) -> int:
+    # --cloud is a meta-flag. Force the sub-flags so the operator can't
+    # accidentally combine --cloud with something incompatible (e.g.
+    # --cloud --no-server would be a paid Lyria session that no visitor
+    # can hear). Also defends against future flags drifting out of sync.
+    if opts.cloud:
+        if opts.no_server:
+            print(
+                "[perform] FAIL: --cloud requires the server (--no-server is "
+                "incompatible: visitors connect via the WS).",
+                file=sys.stderr,
+            )
+            return 2
+        opts.simulate_eeg = True
+        opts.no_browser = True
+        opts.no_tui = True
+
     # Phase 10 deadlock guard: --no-server + no --prompt has no path to
     # ever fire start_requested, so the orchestrator would idle forever.
     # Catch it BEFORE building the task graph so the user gets a clean
@@ -432,6 +514,7 @@ async def _run_async(opts: PerformOptions) -> int:
         prompt=opts.prompt,
         seed_prompt=opts.prompt,
         eeg_mode="simulated" if opts.simulate_eeg else "real",
+        cloud_mode=opts.cloud,
     )
     _summarize_opts(opts)
     print()
@@ -471,12 +554,21 @@ async def _run_async(opts: PerformOptions) -> int:
         stop_evt.set()
 
     sigint_installed = False
+    sigterm_installed = False
     try:
         loop.add_signal_handler(signal.SIGINT, _on_sigint)
         sigint_installed = True
     except NotImplementedError:
         # Windows / odd environments. asyncio.run will fall back to the
         # default Python KeyboardInterrupt path; we catch it in run().
+        pass
+    try:
+        # PaaS containers (Railway, Fly, Heroku) send SIGTERM, then SIGKILL
+        # after a grace period. Treat SIGTERM exactly like SIGINT so the
+        # cleanup paths run before we get killed.
+        loop.add_signal_handler(signal.SIGTERM, _on_sigint)
+        sigterm_installed = True
+    except NotImplementedError:
         pass
 
     exit_code = 0
@@ -508,6 +600,9 @@ async def _run_async(opts: PerformOptions) -> int:
         if sigint_installed:
             with suppress(NotImplementedError):
                 loop.remove_signal_handler(signal.SIGINT)
+        if sigterm_installed:
+            with suppress(NotImplementedError):
+                loop.remove_signal_handler(signal.SIGTERM)
 
         print("[exit] stopped cleanly.")
 

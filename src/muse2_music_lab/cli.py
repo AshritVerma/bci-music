@@ -11,9 +11,26 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import os
 from typing import Optional, Sequence
 
 from muse2_music_lab import config
+
+
+def _default_http_port() -> int:
+    """Honor PaaS-style $PORT env vars (Railway/Fly/Heroku/Render).
+
+    Railway in particular sets $PORT to whatever the platform decided to
+    route external traffic to, and refuses to route to any other port.
+    Falling back to 8000 for local dev keeps the existing UX intact.
+    """
+    raw = os.environ.get("PORT", "").strip()
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            print(f"[cli] WARN: ignoring unparseable $PORT={raw!r}; using 8000")
+    return 8000
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +64,7 @@ def _cmd_perform(args: argparse.Namespace) -> int:
         skip_seed=args.skip_seed,
         no_seed_cache=args.no_seed_cache,
         evolve_chunks=args.evolve_chunks,
+        cloud=args.cloud,
     )
     return perform_run(opts)
 
@@ -139,9 +157,13 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument(
         "--http-port",
         type=int,
-        default=8000,
+        default=_default_http_port(),
         dest="http_port",
-        help="aiohttp server port (default: 8000)",
+        help=(
+            "aiohttp server port (default: 8000, or $PORT if set -- "
+            "Railway and other PaaS providers pin the route to their "
+            "chosen $PORT)."
+        ),
     )
     pp.add_argument(
         "--no-browser",
@@ -210,6 +232,19 @@ def build_parser() -> argparse.ArgumentParser:
             "how the EEG/audio features have moved. Pass 0 to disable. "
             "Cost scales inversely with N: ~$3/hr at 12, ~$1.5/hr at 24 "
             "(default: %(default)s)."
+        ),
+    )
+    pp.add_argument(
+        "--cloud",
+        action="store_true",
+        dest="cloud",
+        help=(
+            "Public-deploy / Railway mode. Implies --simulate-eeg, "
+            "--no-browser, --no-tui; binds the server to 0.0.0.0; "
+            "fans Lyria audio out to every connected browser as binary "
+            "WS frames instead of writing to a local sounddevice; locks "
+            "per-visitor controls (Quit, EEG-mode toggle) so a single "
+            "visitor can't break the experience for everyone else."
         ),
     )
     pp.set_defaults(func=_cmd_perform)
