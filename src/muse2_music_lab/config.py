@@ -144,6 +144,36 @@ LYRIA_SENSITIVITY_GAIN: float = 2.0
 LYRIA_RECONNECT_BACKOFF_S: float = 3.0
 LYRIA_RECONNECT_MAX_ATTEMPTS: int = 3
 
+# Minimum seconds between consecutive set_music_generation_config()
+# pushes to Lyria. Sim EEG fires eeg_tick every 0.25s (4 Hz); pushing
+# config at that rate empirically destabilizes the WebSocket -- the
+# server seems to fall behind processing the rapid update stream and
+# either delays audio production or drops the connection with a
+# keepalive timeout. Throttling to 1 push/second matches the smoke
+# script's tempo and the timescale on which musical parameters are
+# perceptually distinguishable anyway. Set to 0 to push every tick
+# (fastest response, least stable).
+LYRIA_CTRL_PUSH_INTERVAL_S: float = 1.0
+
+# How long to wait after session.play() for the first audio chunk
+# before declaring the session a dud and forcing a reconnect.
+# Background: the lyria-realtime-exp model occasionally accepts a
+# session and then never produces audio (no error, no chunks, just
+# silence until the WebSocket eventually times out at ~60s). The
+# reconnect supervisor would catch this on its own, but only after
+# the WebSocket-level keepalive expires -- a full minute the audience
+# spends in awkward silence. With this watchdog we kill stalled
+# sessions and let the supervisor retry; second attempts usually
+# succeed in 3-6s.
+#
+# 15s is a deliberate compromise: a healthy first-session typically
+# produces audio in 3-6s, so 15s is 3-5x that and won't false-positive
+# on a slow but real warmup. Worst case: stall detected at 15s +
+# reconnect overhead ~5s = ~20s in silence before the audience hears
+# anything. Acceptable for a demo; the "warming up Lyria..." banner
+# in the browser bridges the wait.
+LYRIA_FIRST_CHUNK_TIMEOUT_S: float = 15.0
+
 # How many Claude rewrites to try if Lyria filters the prompt at startup.
 # The prompt-guard module knows how to translate filtered prompts into
 # pure-sonic descriptors. Default 1 = "rewrite once, then surrender".

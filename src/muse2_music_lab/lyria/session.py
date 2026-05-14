@@ -55,6 +55,17 @@ class _MissingApiKey(RuntimeError):
     """Caller should treat this as a fatal config error, not a transient drop."""
 
 
+class _SessionStalled(RuntimeError):
+    """No audio chunks arrived within LYRIA_FIRST_CHUNK_TIMEOUT_S of play().
+
+    Treated as a TRANSIENT failure by the reconnect supervisor (i.e.
+    reconnect immediately, don't count toward the auth-failure budget):
+    Lyria's lyria-realtime-exp model occasionally accepts a session and
+    then never produces audio. The reconnect supervisor's job here is to
+    catch that case fast enough that the audience doesn't notice the
+    silence."""
+
+
 def _load_api_key() -> str:
     """Read GEMINI_API_KEY from .env (or the existing environment).
 
@@ -112,6 +123,7 @@ async def _receive_loop(
     state: AppState,
     guard: Optional[PromptGuard],
     rewrites_state: dict,
+    audio_seen: asyncio.Event,
 ) -> None:
     """Drain server messages. Audio -> state.audio_queue; filters -> guard.
 
@@ -196,6 +208,12 @@ async def _receive_loop(
                         # audio. Stays set across reconnects -- a brief silence
                         # during reconnect doesn't tear down the TUI.
                         state.lyria_ready.set()
+                        # Session-local "first audio arrived" event. Fires
+                        # once per session and unblocks the control loop's
+                        # warmup gate (see _control_loop) so EEG-driven
+                        # config pushes only start after Lyria has proven
+                        # it's actually producing audio for THIS session.
+                        audio_seen.set()
 
                     chunks += 1
                     bytes_total += len(data)
@@ -256,15 +274,88 @@ async def _receive_loop(
         raise
 
 
-async def _control_loop(session, state: AppState) -> None:
-    """One config push per state.eeg_tick. Snapshot + translate + push."""
+async def _stall_watchdog(audio_seen: asyncio.Event, timeout_s: float) -> None:
+    """Raise _SessionStalled if no audio chunk arrives within `timeout_s`.
+
+    Runs as a sibling of the receive + control loops. The session uses
+    FIRST_COMPLETED, so this task must NEVER return normally during a
+    healthy session -- if it did, the asyncio.wait() would treat the
+    successful "audio arrived" check as the session ending and cancel
+    everything else.
+
+    Two valid terminations:
+      1. Timer expires -> raise _SessionStalled (supervisor reconnects)
+      2. Outer task cancels us at session teardown / process shutdown
+    """
+    try:
+        await asyncio.wait_for(audio_seen.wait(), timeout=timeout_s)
+    except asyncio.TimeoutError:
+        raise _SessionStalled(
+            f"No audio chunk arrived within {timeout_s:.0f}s of session.play(); "
+            "forcing reconnect to recover from the lyria-realtime-exp model "
+            "occasionally accepting a session it then never produces audio for."
+        )
+
+    # Audio is flowing; our watchdog responsibility is over. Park
+    # indefinitely so the session's FIRST_COMPLETED race only fires
+    # on real terminations (clean close, real error, or shutdown
+    # cancellation), not on our successful exit.
+    await asyncio.Event().wait()
+
+
+async def _control_loop(
+    session,
+    state: AppState,
+    audio_seen: asyncio.Event,
+) -> None:
+    """Gated, rate-limited config pushes from AppState.
+
+    Two correctness gates protect Lyria's warmup:
+
+      1. WAIT for `audio_seen` before pushing ANYTHING. The
+         lyria-realtime-exp model is sensitive to control pushes that
+         arrive between session.play() and the first audio chunk: the
+         server can either delay generation indefinitely or drop the
+         WebSocket with a keepalive timeout. Deferring all pushes
+         until we've seen at least one chunk costs ~3-8s of "no EEG
+         response" at session start (typically the user is still
+         settling in, not noticing) and trades it for reliable music
+         delivery.
+
+      2. RATE-LIMIT to LYRIA_CTRL_PUSH_INTERVAL_S between pushes.
+         eeg_tick fires at 4 Hz; pushing config at 4 Hz also tends to
+         destabilize Lyria. 1 Hz tracks musical perception (the model
+         needs at least a beat or two to render a config change in
+         audible form) without poking the server too hard.
+    """
     pushes = 0
     last_summary_t = time.monotonic()
     last_summary_pushes = 0
+    last_push_t = 0.0
+
+    print(
+        "[lyria-ctrl] awaiting first audio chunk before sending control pushes...",
+        flush=True,
+    )
+    await audio_seen.wait()
+    print(
+        f"[lyria-ctrl] first audio observed; control pushes enabled "
+        f"(rate-limit {config.LYRIA_CTRL_PUSH_INTERVAL_S:.2f}s)",
+        flush=True,
+    )
 
     while True:
         await state.eeg_tick.wait()
         state.eeg_tick.clear()
+
+        # Coalesce: if multiple eeg_ticks fired during the rate-limit
+        # window, we want the most-recent one, not a backlog. The most
+        # recent values are already in AppState (the EEG loop overwrites
+        # in place); just skip this iteration if it's too soon.
+        now = time.monotonic()
+        if now - last_push_t < config.LYRIA_CTRL_PUSH_INTERVAL_S:
+            continue
+        last_push_t = now
 
         # Snapshot the values we care about before any other coroutine
         # has a chance to mutate them. (asyncio guarantees serial execution
@@ -364,15 +455,25 @@ async def _run_one_session(
             flush=True,
         )
 
+        # Session-local "first audio chunk arrived" event. The control
+        # task waits on this before its first push (warmup gate); the
+        # watchdog uses it to detect a stalled session that needs
+        # reconnect.
+        audio_seen = asyncio.Event()
+
         recv_task = asyncio.create_task(
-            _receive_loop(session, state, guard, rewrites_state),
+            _receive_loop(session, state, guard, rewrites_state, audio_seen),
             name="lyria-recv",
         )
         ctrl_task = asyncio.create_task(
-            _control_loop(session, state),
+            _control_loop(session, state, audio_seen),
             name="lyria-ctrl",
         )
-        inner_tasks = [recv_task, ctrl_task]
+        watchdog_task = asyncio.create_task(
+            _stall_watchdog(audio_seen, config.LYRIA_FIRST_CHUNK_TIMEOUT_S),
+            name="lyria-watchdog",
+        )
+        inner_tasks = [recv_task, ctrl_task, watchdog_task]
 
         first_failure: Optional[BaseException] = None
         try:
@@ -485,6 +586,23 @@ async def run_lyria_loop(state: AppState) -> None:
         except asyncio.CancelledError:
             print("[lyria] cancelled", flush=True)
             raise
+
+        except _SessionStalled as e:
+            # Special-case: this is a known-flaky upstream behavior, not
+            # an indication that the integration is broken. Fast-reconnect
+            # (no backoff scaling) and DON'T count toward the consecutive-
+            # failure budget so we keep trying even after several stalls.
+            # The audience is in silence right now; getting back into
+            # production matters more than being polite to the API.
+            print(f"[lyria] session stalled: {e}", flush=True)
+            print(
+                "[lyria] fast-reconnecting (stall doesn't count toward "
+                "the failure budget; this is the known lyria-realtime-exp "
+                "warmup-stall workaround)",
+                flush=True,
+            )
+            await asyncio.sleep(0.5)
+            continue
 
         except Exception as e:
             consecutive_failures += 1
