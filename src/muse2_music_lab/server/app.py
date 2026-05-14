@@ -124,15 +124,20 @@ async def _websocket(request: web.Request) -> web.WebSocketResponse:
     peer = request.remote or "?"
     print(f"[server] ws connect from {peer} (clients={len(clients)})", flush=True)
 
-    # Cloud mode: send the audio_init header immediately so the browser
-    # can spin up its AudioContext at the right sample rate / channel
-    # count before any binary PCM frames arrive. Local-mode browsers
-    # ignore it (their audio comes from sounddevice on the host).
-    if state.cloud_mode:
-        try:
-            await ws.send_str(audio_init_message())
-        except Exception as e:
-            print(f"[server] failed to send audio_init: {e!r}", flush=True)
+    # Send the audio_init header immediately so the browser can spin
+    # up its AudioContext at the right sample rate / channel count
+    # before any binary PCM frames arrive.
+    #
+    # Sent in BOTH modes now (was previously gated behind cloud_mode):
+    # the browser-side recorder needs the PCM stream for the in-browser
+    # MediaRecorder pipeline that fuses canvas video + Lyria audio into
+    # one downloadable WebM file. The `playback` field tells local-mode
+    # pages to ingest-but-not-play (sounddevice on the host owns the
+    # speakers); cloud-mode pages still play through the browser.
+    try:
+        await ws.send_str(audio_init_message(playback=state.cloud_mode))
+    except Exception as e:
+        print(f"[server] failed to send audio_init: {e!r}", flush=True)
 
     try:
         async for msg in ws:
@@ -492,14 +497,15 @@ async def run_server_loop(state: AppState, opts: ServerOptions) -> None:
         opener = asyncio.create_task(
             _maybe_open_browser(opts), name="server-open-browser"
         )
-        # Cloud mode: also spawn the audio fan-out task. In local mode
-        # this task isn't needed -- sounddevice plays audio on the host.
-        audio_bcaster: "asyncio.Task | None" = None
-        if opts.cloud_mode:
-            audio_bcaster = asyncio.create_task(
-                run_audio_broadcast_loop(app, state),
-                name="server-audio-bcast",
-            )
+        # Always spawn the audio fan-out task. In cloud mode it's the
+        # primary playback path; in local mode it carries PCM to the
+        # browser for the in-browser recorder (canvas + audio -> WebM).
+        # The broadcaster drops chunks when no client is connected, so
+        # it's CPU-cheap in the no-recording-no-cloud-visitor case.
+        audio_bcaster: "asyncio.Task | None" = asyncio.create_task(
+            run_audio_broadcast_loop(app, state),
+            name="server-audio-bcast",
+        )
 
         # Park forever: cancellation comes from the orchestrator on SIGINT.
         # The broadcaster task does the actual work; we just hold the
@@ -509,9 +515,7 @@ async def run_server_loop(state: AppState, opts: ServerOptions) -> None:
         finally:
             # Tear down the inner tasks first; mirrors the lyria session
             # shutdown pattern so we never orphan a child task.
-            children = [broadcaster, opener]
-            if audio_bcaster is not None:
-                children.append(audio_bcaster)
+            children = [broadcaster, opener, audio_bcaster]
             for t in children:
                 if not t.done():
                     t.cancel()

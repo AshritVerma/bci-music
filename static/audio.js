@@ -64,8 +64,22 @@
   // Called once when the server sends the JSON audio_init message.
   // Builds the AudioContext at the right sample rate (48kHz from
   // Lyria) so the browser doesn't have to resample every chunk.
-  function setup({ sampleRate, channels }) {
+  //
+  // `playback` (default true for backward compat): in local mode the
+  // server sends `playback: false` because sounddevice on the host owns
+  // the speakers -- the browser still receives PCM frames (so the
+  // in-browser recorder.js can capture them) but audio.js silently
+  // refuses to play them. Without this gate the user would hear the
+  // audio twice (sounddevice + browser).
+  function setup({ sampleRate, channels, playback = true }) {
     if (state.enabled) return;
+    if (!playback) {
+      console.log(
+        "[audio] playback disabled (server says local mode " +
+          "-- sounddevice owns the speakers, recorder.js will capture)"
+      );
+      return;
+    }
     state.sampleRate = sampleRate;
     state.channels = channels;
     try {

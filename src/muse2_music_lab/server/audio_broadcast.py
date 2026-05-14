@@ -58,6 +58,12 @@ async def run_audio_broadcast_loop(
     bytes_sent = 0
     drops = 0
 
+    print(
+        "[audio-bcast] started (waits on state.audio_broadcast_queue; "
+        "fans each chunk to every connected WS client)",
+        flush=True,
+    )
+
     try:
         while True:
             chunk = await state.audio_broadcast_queue.get()
@@ -103,12 +109,23 @@ async def run_audio_broadcast_loop(
         raise
 
 
-def audio_init_message() -> str:
+def audio_init_message(*, playback: bool) -> str:
     """Return the JSON 'audio_init' header to send to a client on connect.
 
-    Tells the browser-side audio module how to interpret the binary
-    frames that follow. Format is fixed by Lyria's output:
-    48 kHz / 2 ch / s16 little-endian interleaved.
+    Tells the browser how to interpret the binary frames that follow
+    (Lyria's fixed 48 kHz / 2 ch / s16 little-endian interleaved
+    format) AND whether the browser should play those frames or merely
+    capture them silently for the in-browser MediaRecorder.
+
+    `playback`:
+      * True  -> cloud / public-deploy mode: there's no host-side
+                 sounddevice, the browser IS the speaker. audio.js
+                 wires the AudioContext to ctx.destination.
+      * False -> local mode: sounddevice on the host plays the audio.
+                 The browser still needs the PCM stream to feed the
+                 in-browser recorder (which combines it with the
+                 canvas video into one WebM file), but it must NOT
+                 play it through speakers or the user hears double.
     """
     import json
     return json.dumps(
@@ -117,6 +134,7 @@ def audio_init_message() -> str:
             "sample_rate": config.LYRIA_SAMPLE_RATE,
             "channels": config.LYRIA_CHANNELS,
             "format": "s16le",
+            "playback": bool(playback),
         },
         separators=(",", ":"),
     )
