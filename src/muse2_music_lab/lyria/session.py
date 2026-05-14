@@ -118,6 +118,146 @@ def _is_clean_websocket_close(exc: BaseException) -> bool:
     return code in (1000, 1001)
 
 
+async def _prompt_crossfade_loop(
+    session,
+    state: AppState,
+    rewrites_state: dict,
+    audio_seen: asyncio.Event,
+) -> None:
+    """Watch state.prompt_change_request and execute weighted-prompt crossfades.
+
+    Wall-clock-driven (NOT chunk-arrival-driven) so a full audio queue
+    -- Lyria sometimes bursts ahead of the player at session start --
+    can't delay the user-visible transition. The first push lands
+    immediately on event fire; subsequent steps are paced one per
+    LYRIA_CHUNK_DURATION_S so the audible blend matches the rate the
+    music actually unfolds.
+
+    Latest-wins target switching: if the user types a SECOND new prompt
+    while the first crossfade is still ramping, we restart the ramp
+    against the new target (using whatever weight we're currently at as
+    the "old" anchor isn't worth the complexity -- snapping to the new
+    target's full ramp from where we are is musically fine and the user
+    gets a fresh predictable timeline).
+
+    Spawned as a sibling of receive + control + watchdog inside one
+    Lyria session. Cancellation comes from the session shutdown path
+    (clean close, error, or orchestrator stop).
+    """
+    from google.genai import types
+
+    # Wait for first audio so we don't try to push weighted_prompts
+    # during Lyria's warmup window (same antipattern that motivated
+    # the control-loop warmup gate).
+    await audio_seen.wait()
+
+    while True:
+        await state.prompt_change_request.wait()
+
+        # Snapshot the request so a mid-flight target change can be
+        # detected (we re-read state.prompt_change_target each step).
+        target = state.prompt_change_target
+        total = max(1, state.prompt_change_chunks)
+        old = state.prompt
+        if not target:
+            # Spurious wake-up (event fired with no target). Clear and
+            # wait for the next request.
+            state.prompt_change_request.clear()
+            continue
+
+        print(
+            f"[lyria] starting prompt crossfade -> {target!r} "
+            f"over {total} chunks (~{total * config.LYRIA_CHUNK_DURATION_S:.0f}s)",
+            flush=True,
+        )
+
+        # Single-step ramp loop; checks for mid-flight target switch on
+        # each iteration (latest-wins UX: a second Enter restarts the
+        # ramp against the new target). step=1..total inclusive; the
+        # final step always pushes weight=1.0 on the target.
+        step = 0
+        while step < total:
+            step += 1
+            if state.prompt_change_target and state.prompt_change_target != target:
+                target = state.prompt_change_target
+                total = max(1, state.prompt_change_chunks)
+                old = state.prompt
+                step = 1
+                print(
+                    f"[lyria] mid-transition target switch -> "
+                    f"{target!r} over {total} chunks (restarting ramp)",
+                    flush=True,
+                )
+
+            await _do_crossfade_step(
+                session, state, old, target, step, total, types
+            )
+            if step < total:
+                await asyncio.sleep(config.LYRIA_CHUNK_DURATION_S)
+
+        old_prompt = state.prompt
+        state.prompt = target
+        state.seed_prompt = target
+        rewrites_state["active"] = target
+        state.prompt_change_target = ""
+        state.prompt_change_chunks = 0
+        state.prompt_transition_progress = 0.0
+        state.prompt_change_request.clear()
+        print(
+            f"[lyria] prompt crossfade complete: "
+            f"{old_prompt!r} -> {target!r}",
+            flush=True,
+        )
+
+
+async def _do_crossfade_step(
+    session,
+    state: AppState,
+    old_prompt: str,
+    target: str,
+    step: int,
+    total: int,
+    types_module,
+) -> None:
+    """Push one step of a crossfade and update state.prompt_transition_progress.
+
+    Splits the per-step work out of _prompt_crossfade_loop so the
+    mid-flight-target-switch path can re-use it without copying logic.
+    Tolerates set_weighted_prompts failures by logging and snapping
+    progress to 1.0 -- the outer loop will then finalize and return,
+    which is a saner UX than tearing down the Lyria session for what
+    is almost always a transient SDK hiccup.
+    """
+    progress = min(1.0, step / total)
+    state.prompt_transition_progress = progress
+    if step >= total:
+        prompts = [types_module.WeightedPrompt(text=target, weight=1.0)]
+    else:
+        prompts = [
+            types_module.WeightedPrompt(text=old_prompt, weight=max(0.0, 1.0 - progress)),
+            types_module.WeightedPrompt(text=target, weight=progress),
+        ]
+    try:
+        await session.set_weighted_prompts(prompts=prompts)
+    except Exception as e:
+        print(
+            f"[lyria] crossfade push failed: {e!r}; snapping progress to 1.0",
+            flush=True,
+        )
+        state.prompt_transition_progress = 1.0
+        return
+    if step >= total:
+        # Finalization log handled by the caller (which knows the
+        # old prompt before mutation).
+        pass
+    else:
+        print(
+            f"[lyria] crossfade {step}/{total} "
+            f"(old={1.0 - progress:.2f} new={progress:.2f})",
+            flush=True,
+        )
+
+
 async def _receive_loop(
     session,
     state: AppState,
@@ -473,7 +613,16 @@ async def _run_one_session(
             _stall_watchdog(audio_seen, config.LYRIA_FIRST_CHUNK_TIMEOUT_S),
             name="lyria-watchdog",
         )
-        inner_tasks = [recv_task, ctrl_task, watchdog_task]
+        # Mid-session prompt crossfade engine. Wakes on
+        # state.prompt_change_request, executes a wall-clock-driven
+        # weighted_prompts ramp, finalizes by replacing state.prompt.
+        # Wall-clock pacing decouples from audio queue depth so a
+        # press-Enter always gets near-immediate user-visible response.
+        crossfade_task = asyncio.create_task(
+            _prompt_crossfade_loop(session, state, rewrites_state, audio_seen),
+            name="lyria-crossfade",
+        )
+        inner_tasks = [recv_task, ctrl_task, watchdog_task, crossfade_task]
 
         first_failure: Optional[BaseException] = None
         try:
