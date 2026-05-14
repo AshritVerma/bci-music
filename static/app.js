@@ -39,6 +39,9 @@
     startStatus: document.getElementById("start-status"),
     endedOverlay: document.getElementById("ended-overlay"),
     warmingBanner: document.getElementById("warming-banner"),
+    calibrationBanner: document.getElementById("calibration-banner"),
+    calibrationCountdown: document.getElementById("calibration-countdown"),
+    calibrationProgressFill: document.getElementById("calibration-progress-fill"),
     recordBtn: document.getElementById("record-btn"),
     recordLabel: document.querySelector("#record-btn .record-label"),
     recordElapsed: document.querySelector("#record-btn .record-elapsed"),
@@ -436,6 +439,50 @@
   // recorder module being present (defense-in-depth: very old
   // browsers might not support MediaRecorder).
   let lyriaStartedFlag = false;
+
+  // ---- Calibration countdown ticker -------------------------------
+  // The server snaps the authoritative `calibration_remaining_s` into
+  // calibrationState every ~50ms (20 Hz WS broadcast). We run a rAF
+  // loop on top of that so the visible digits actually count down
+  // smoothly between snapshots: each frame, we subtract
+  // (now - lastSnapshotAt) from the snapshotted remaining to get a
+  // fresh display value. Whenever a new snapshot arrives, the values
+  // get re-snapped (see applyState above), preventing drift.
+  //
+  // The ticker no-ops when the banner is hidden (`total === 0`).
+  const calibrationState = {
+    total: 0,
+    remaining: 0,
+    lastSnapshotAt: 0,
+  };
+  function renderCalibrationCountdown() {
+    if (!els.calibrationBanner || els.calibrationBanner.hidden) return;
+    const total = calibrationState.total;
+    if (total <= 0) return;
+    const elapsedSinceSnapshot =
+      Math.max(0, performance.now() - calibrationState.lastSnapshotAt) / 1000;
+    const live = Math.max(
+      0,
+      calibrationState.remaining - elapsedSinceSnapshot
+    );
+    if (els.calibrationCountdown) {
+      els.calibrationCountdown.textContent = `${live.toFixed(1)}s`;
+    }
+    if (els.calibrationProgressFill) {
+      // Drains left -> right: starts full (100%) when remaining=total,
+      // empties to 0% as we approach 0. Reads as "this much time still
+      // to wait" rather than "this much done", which matches what the
+      // user is asking ("how long until I can move?").
+      const pct = Math.max(0, Math.min(100, (live / total) * 100));
+      els.calibrationProgressFill.style.width = `${pct}%`;
+    }
+  }
+  function tickCalibrationCountdown() {
+    renderCalibrationCountdown();
+    requestAnimationFrame(tickCalibrationCountdown);
+  }
+  requestAnimationFrame(tickCalibrationCountdown);
+
   function refreshRecorderButtons() {
     if (!window.recorder) {
       els.recordBtn.disabled = true;
@@ -744,6 +791,40 @@
     if (els.warmingBanner) {
       const warming = !!s.lyria_started && !s.lyria_ready;
       els.warmingBanner.hidden = !warming;
+    }
+
+    // Calibration banner: shown while the EEG loop is collecting baseline
+    // samples (initial connect + every recalibrate). Server reports
+    // calibration_remaining_s ~20x/s; we snap our local target to that
+    // value, and `tickCalibrationCountdown()` (rAF) drains it smoothly
+    // between snapshots so the digits actually count down instead of
+    // stepping in 50ms increments.
+    if (els.calibrationBanner) {
+      const cal = !!s.calibrating;
+      els.calibrationBanner.hidden = !cal;
+      if (cal) {
+        const total = Math.max(0, Number(s.calibration_total_s) || 0);
+        const remaining = Math.max(
+          0,
+          Number(s.calibration_remaining_s) || 0
+        );
+        // Snap state to server reality. `lastSnapshotAt` lets the rAF
+        // ticker subtract elapsed-since-snapshot to keep the digits
+        // moving smoothly between WS frames.
+        calibrationState.total = total;
+        calibrationState.remaining = remaining;
+        calibrationState.lastSnapshotAt = performance.now();
+        // Disable the recalibrate button while one is in flight; the
+        // existing canRecal check would otherwise stay true (link is
+        // still "connected") and let the user fire a second recalibrate
+        // request mid-window, which the backend would just ignore.
+        if (els.recalibrateBtn) {
+          els.recalibrateBtn.disabled = true;
+        }
+        // Render once immediately so the banner shows the current
+        // value on the first frame instead of a flash of "0.0s".
+        renderCalibrationCountdown();
+      }
     }
 
     for (const [key, refs] of els.rows) {

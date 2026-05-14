@@ -187,6 +187,30 @@
   </div>
 
   <!--
+    Calibration banner. Shown while the EEG loop is collecting baseline
+    samples -- both at initial connect AND every user-triggered
+    recalibrate. Tells the user to sit still + eyes open with a live
+    countdown so they know exactly how long until the music starts
+    responding to them. Hidden the moment state.calibrating goes false.
+
+    Stacked BELOW the warming banner (top: 100px) so both can render
+    simultaneously without overlapping during a recalibrate that
+    happens to coincide with a Lyria reconnect.
+  -->
+  <div id="calibration-banner" class="calibration-banner" hidden>
+    <div class="calibration-banner-row">
+      <span class="calibration-icon" aria-hidden="true">●</span>
+      <span class="calibration-text">
+        calibrating EEG &mdash; sit still, eyes open
+      </span>
+      <span class="calibration-countdown" id="calibration-countdown">0.0s</span>
+    </div>
+    <div class="calibration-progress" aria-hidden="true">
+      <div class="calibration-progress-fill" id="calibration-progress-fill"></div>
+    </div>
+  </div>
+
+  <!--
     Phase 10 session-ended overlay. Hidden by default; shown only after
     the user clicks Quit (or the perform process exits any other way).
     Suppresses the WS auto-reconnect loop so the page doesn't spam

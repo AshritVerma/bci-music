@@ -214,6 +214,24 @@ class AppState:
     prompt_transition_progress: float = 0.0
     prompt_change_request: asyncio.Event = field(default_factory=asyncio.Event)
 
+    # ------- Calibration progress (browser banner) -------
+    # `calibrating` flips True while the EEG loop is collecting baseline
+    # samples (initial connect AND every user-triggered recalibrate). The
+    # browser shows a "sit still, eyes open" banner with a live countdown
+    # while it's True. Cleared in a finally-block at the end of
+    # _calibrate() so a cancelled/exceptional calibration still releases
+    # the banner instead of leaving the user stuck on screen.
+    #
+    # `calibration_started_ts` is monotonic time when the current window
+    # started; `calibration_total_s` is the (constant per run) duration
+    # the window was scheduled for. snapshot() computes the live
+    # `calibration_remaining_s` from these two so the browser doesn't
+    # have to share a clock with the server -- it just gets a fresh
+    # remaining value 20x/s and ticks it down between snapshots itself.
+    calibrating: bool = False
+    calibration_started_ts: float = 0.0
+    calibration_total_s: float = 0.0
+
     # ------- Sync + plumbing -------
     eeg_tick: asyncio.Event = field(default_factory=asyncio.Event)
     recalibrate_request: asyncio.Event = field(default_factory=asyncio.Event)
@@ -292,6 +310,22 @@ class AppState:
             # Empty when no transition; the browser shows it next to
             # the progress badge so the user can see what's coming.
             "prompt_change_target": self.prompt_change_target,
+            # Calibration banner: True while EEG baseline window is
+            # collecting samples. `calibration_remaining_s` is computed
+            # here (not stored as a field) so every snapshot ships an
+            # up-to-date value without _calibrate() needing to write
+            # the field on every loop iteration.
+            "calibrating": self.calibrating,
+            "calibration_remaining_s": (
+                max(
+                    0.0,
+                    self.calibration_total_s
+                    - (time.monotonic() - self.calibration_started_ts),
+                )
+                if self.calibrating and self.calibration_total_s > 0.0
+                else 0.0
+            ),
+            "calibration_total_s": self.calibration_total_s,
             # EEG mode toggle (browser shows current; lets the user swap
             # between real and simulated mid-session).
             "eeg_mode": self.eeg_mode,

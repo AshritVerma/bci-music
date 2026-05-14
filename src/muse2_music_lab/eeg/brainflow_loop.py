@@ -70,39 +70,52 @@ async def _calibrate(
     sampling_rate: int,
     blink: BlinkDetector,
     jaw: JawClenchDetector,
+    state: AppState,
 ) -> Normalizer:
     """Collect baseline samples for CALIBRATION_DURATION seconds.
 
     Yields to the event loop between samples so other tasks (state logger,
     server stub, etc.) keep heart-beating during the wait.
+
+    Sets `state.calibrating` + start-ts + total so the browser can render
+    a "sit still, eyes open" countdown banner. The flag is cleared in a
+    finally-block so a cancelled/exceptional calibration still releases
+    the banner -- otherwise a dropped BLE link mid-calibration would
+    leave the user staring at a frozen "calibrating..." screen.
     """
     print(
         f"[eeg] calibrating for {config.CALIBRATION_DURATION:.0f}s "
         "(sit still, eyes open)...",
         flush=True,
     )
-    calibrator = Calibrator(names=_CONTINUOUS_NAMES)
-    end = time.monotonic() + config.CALIBRATION_DURATION
-    while time.monotonic() < end:
-        window = await _read_window(loop, board)
-        if window.shape[1] >= config.WINDOW_SIZE:
-            frame = compute_frame(window, sampling_rate, blink, jaw)
-            calibrator.add(
-                {
-                    "alpha": frame.alpha,
-                    "beta": frame.beta,
-                    "theta": frame.theta,
-                }
-            )
-        await asyncio.sleep(config.PERFORM_TICK_S)
+    state.calibration_total_s = float(config.CALIBRATION_DURATION)
+    state.calibration_started_ts = time.monotonic()
+    state.calibrating = True
+    try:
+        calibrator = Calibrator(names=_CONTINUOUS_NAMES)
+        end = state.calibration_started_ts + config.CALIBRATION_DURATION
+        while time.monotonic() < end:
+            window = await _read_window(loop, board)
+            if window.shape[1] >= config.WINDOW_SIZE:
+                frame = compute_frame(window, sampling_rate, blink, jaw)
+                calibrator.add(
+                    {
+                        "alpha": frame.alpha,
+                        "beta": frame.beta,
+                        "theta": frame.theta,
+                    }
+                )
+            await asyncio.sleep(config.PERFORM_TICK_S)
 
-    norm = Normalizer(calibrator.finish())
-    summary = "  ".join(
-        f"{n}=μ{b.mean:+.2f}/σ{b.std:.2f}"
-        for n, b in norm.baselines.items()
-    )
-    print(f"[eeg] calibrated. baseline {summary}", flush=True)
-    return norm
+        norm = Normalizer(calibrator.finish())
+        summary = "  ".join(
+            f"{n}=μ{b.mean:+.2f}/σ{b.std:.2f}"
+            for n, b in norm.baselines.items()
+        )
+        print(f"[eeg] calibrated. baseline {summary}", flush=True)
+        return norm
+    finally:
+        state.calibrating = False
 
 
 async def _stream_body(
@@ -152,7 +165,7 @@ async def _stream_body(
             state.recalibrate_request.clear()
             print("[eeg] recalibrate requested -- holding stream...", flush=True)
             normalizer_holder[0] = await _calibrate(
-                loop, board, info.sampling_rate, blink, jaw
+                loop, board, info.sampling_rate, blink, jaw, state
             )
             for ema in emas.values():
                 ema.reset()
@@ -273,7 +286,7 @@ async def run_real_eeg_loop(state: AppState) -> None:
                 # calibration. Failure here propagates through the same
                 # except path as a stream-time drop.
                 normalizer_holder[0] = await _calibrate(
-                    loop, board, info.sampling_rate, blink, jaw
+                    loop, board, info.sampling_rate, blink, jaw, state
                 )
                 # Signal to the perform TUI (and any other waiter) that
                 # AppState is now producing meaningful normalized values.

@@ -100,7 +100,13 @@ Browser controls (always available):
   next to the prompt shows live `→ <new prompt> (NN%)` progress.
   Type a second prompt mid-crossfade to redirect (latest-wins).
   Escape (or click away) cancels back to display mode.
-- **Recalibrate** — rebaselines the EEG normalizer in place
+- **Recalibrate** — rebaselines the EEG normalizer in place. While
+  the 8 s baseline window is open a floating amber banner shows
+  *"calibrating EEG — sit still, eyes open"* with a live countdown
+  and progress bar so you know exactly how long until the music
+  starts responding to you again. Same banner appears on initial
+  connect for the very first calibration. The Recalibrate button
+  is disabled until the window closes
 - **Quit** — stops every task and exits the Python process cleanly
 - **EEG: real / simulated** — hot-swap between the headset and the
   synthetic generator without restarting

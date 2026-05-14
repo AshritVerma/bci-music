@@ -171,7 +171,12 @@ You can pivot to a totally different vibe without restarting:
 
 - **EEG bars all stuck at 0.50**: the headset lost contact OR the
   baseline normalized against a flat signal. Click **Recalibrate**
-  in the header (8 s baseline window, no audio interruption).
+  in the header. An amber banner appears with a live countdown
+  ("calibrating EEG — sit still, eyes open  6.4s") so you (and the
+  audience) know exactly how long until the music starts responding
+  again. Stay still + eyes open for the full 8 s; the banner
+  disappears the instant the new baseline is captured. No audio
+  interruption — Lyria keeps playing on the last config.
 
 - **EEG: lost / Muse: failed pill is red**: BLE drop. The supervisor
   auto-reconnects up to 3 times. If it gives up, click the EEG mode
