@@ -9,7 +9,11 @@ should snapshot at the top of the consumer.
 Layout follows PROJECT_PLAN.md section 3.5:
 
     Session config
-        prompt          - one-shot at startup, never mutated after
+        prompt          - the active prompt driving Lyria. Initially set
+                          by the browser Start panel; can change mid-
+                          session via the change_prompt action (the
+                          Lyria crossfade engine atomically replaces it
+                          when a transition completes).
 
     EEG features (normalized to [0, 1], written by brainflow_loop)
         alpha           - eyes-closed relaxation
@@ -193,6 +197,23 @@ class AppState:
     # follows once Lyria has actually produced sound.
     lyria_started: bool = False
 
+    # ------- Mid-session prompt change -------
+    # Browser sends an action {action:"change_prompt", prompt:"...", chunks:N}
+    # The server validates and writes prompt_change_target +
+    # prompt_change_chunks then fires prompt_change_request. The Lyria
+    # receive loop snoops the event, replaces its current prompt, and
+    # ramps a weighted set_weighted_prompts() crossfade over `chunks`
+    # audio chunks (each chunk ~= 2 s of music).
+    #
+    # `prompt_transition_progress` is the live 0..1 ramp value, exposed
+    # in snapshot() so the browser can render a "changing... 37%" badge
+    # next to the prompt. Resets to 0.0 at boot AND on transition
+    # completion (so the badge disappears after the crossfade ends).
+    prompt_change_target: str = ""
+    prompt_change_chunks: int = 0
+    prompt_transition_progress: float = 0.0
+    prompt_change_request: asyncio.Event = field(default_factory=asyncio.Event)
+
     # ------- Sync + plumbing -------
     eeg_tick: asyncio.Event = field(default_factory=asyncio.Event)
     recalibrate_request: asyncio.Event = field(default_factory=asyncio.Event)
@@ -263,6 +284,14 @@ class AppState:
             # frontend uses this to show a small Warming-up banner
             # between Start-clicked and first-audio.
             "lyria_ready": self.lyria_ready.is_set(),
+            # Live 0..1 progress of an in-flight mid-session prompt
+            # change. 0.0 when no transition is happening. Browser
+            # renders a "changing prompt... NN%" badge while > 0.0.
+            "prompt_transition_progress": self.prompt_transition_progress,
+            # The destination prompt while a transition is in flight.
+            # Empty when no transition; the browser shows it next to
+            # the progress badge so the user can see what's coming.
+            "prompt_change_target": self.prompt_change_target,
             # EEG mode toggle (browser shows current; lets the user swap
             # between real and simulated mid-session).
             "eeg_mode": self.eeg_mode,

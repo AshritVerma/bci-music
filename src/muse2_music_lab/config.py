@@ -179,6 +179,24 @@ LYRIA_FIRST_CHUNK_TIMEOUT_S: float = 15.0
 # pure-sonic descriptors. Default 1 = "rewrite once, then surrender".
 LYRIA_MAX_PROMPT_REWRITES: int = 1
 
+# Approximate wall-clock duration of one Lyria audio chunk. Lyria's
+# lyria-realtime-exp model emits ~96000-frame stereo chunks at 48 kHz,
+# which is exactly 2 s of music. The mid-session prompt crossfade
+# uses this as the per-step pacing (one weighted_prompts push every
+# ~LYRIA_CHUNK_DURATION_S so the audible blend matches the rate the
+# music actually unfolds). Wall-clock-driven rather than receive-loop-
+# driven so a full audio queue (Lyria sometimes bursts ahead of the
+# player at session start) doesn't delay the user-visible crossfade.
+LYRIA_CHUNK_DURATION_S: float = 2.0
+
+# Default crossfade duration when the user changes the prompt mid-session
+# (browser clicks the header prompt, types a new one, hits Enter).
+# Expressed in chunks for an intuitive units. At LYRIA_CHUNK_DURATION_S
+# per step, 8 chunks = ~16 s of musical handoff -- long enough to feel
+# smooth, short enough to not seem broken. The browser may override
+# per-request but defaults to this if it doesn't pass a `chunks` field.
+LYRIA_PROMPT_CHANGE_DEFAULT_CHUNKS: int = 8
+
 
 # ---------------------------------------------------------------------------
 # Audio analysis (Phase 6)

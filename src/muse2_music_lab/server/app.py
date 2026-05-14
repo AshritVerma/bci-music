@@ -227,6 +227,55 @@ async def _handle_action(
         await _ack(ws, ok=True)
         return
 
+    if action == "change_prompt":
+        # Mid-session prompt change. Browser sends the new prompt; the
+        # Lyria receive loop snoops the event, ramps a weighted
+        # crossfade over `chunks` audio chunks (default = config), and
+        # finalizes by replacing state.prompt.
+        #
+        # Validation rules (defense-in-depth, mirrors browser checks):
+        #   * Must be after Start (no prompt to change otherwise).
+        #   * Lyria session must have produced audio (else there's no
+        #     receive loop to snoop the event yet -- pushing weighted
+        #     prompts before first audio is the same antipattern that
+        #     stalled sessions in DEMO_CHECKLIST work).
+        #   * Prompt must be non-empty after strip().
+        #   * Crossfade chunks clamped to [1, 64] -- 64 chunks ~= 2 min,
+        #     longer than that is almost certainly a typo.
+        if not state.lyria_started:
+            await _ack(ws, ok=False, error="press Start first; no session to update")
+            return
+        if not state.lyria_ready.is_set():
+            await _ack(ws, ok=False, error="Lyria still warming up; try again in a moment")
+            return
+        prompt = (msg.get("prompt") or "").strip()
+        if not prompt:
+            await _ack(ws, ok=False, error="empty prompt")
+            return
+        if prompt == state.prompt and state.prompt_change_target == "":
+            await _ack(ws, ok=True, info="prompt unchanged")
+            return
+        try:
+            chunks = int(msg.get("chunks") or config.LYRIA_PROMPT_CHANGE_DEFAULT_CHUNKS)
+        except (TypeError, ValueError):
+            chunks = config.LYRIA_PROMPT_CHANGE_DEFAULT_CHUNKS
+        chunks = max(1, min(64, chunks))
+        # Atomic-enough write: there's only one Lyria session task that
+        # ever reads these fields, and asyncio is cooperative, so as long
+        # as we set them before .set()-ing the event the receive loop
+        # will see a consistent triple.
+        state.prompt_change_target = prompt
+        state.prompt_change_chunks = chunks
+        state.prompt_transition_progress = 0.0
+        state.prompt_change_request.set()
+        print(
+            f"[server] action=change_prompt  prompt={prompt!r} "
+            f"chunks={chunks}",
+            flush=True,
+        )
+        await _ack(ws, ok=True, info=f"crossfading over {chunks} chunks")
+        return
+
     if action == "quit":
         # Set the orchestrator's stop event so EVERY task (EEG, Lyria,
         # audio, server, evolver, ...) cancels in unison. We ack BEFORE
