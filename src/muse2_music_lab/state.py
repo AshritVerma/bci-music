@@ -257,6 +257,12 @@ class AppState:
             # Phase 10 control surface.
             "eeg_connection_state": self.eeg_connection_state,
             "lyria_started": self.lyria_started,
+            # True once Lyria has emitted at least one audio chunk this
+            # process. Lets the browser distinguish "user clicked Start
+            # but no music yet (warming up)" from "music is live". The
+            # frontend uses this to show a small Warming-up banner
+            # between Start-clicked and first-audio.
+            "lyria_ready": self.lyria_ready.is_set(),
             # EEG mode toggle (browser shows current; lets the user swap
             # between real and simulated mid-session).
             "eeg_mode": self.eeg_mode,

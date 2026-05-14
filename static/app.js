@@ -39,6 +39,7 @@
     endedOverlay: document.getElementById("ended-overlay"),
     audioOverlay: document.getElementById("audio-enable-overlay"),
     audioBtn: document.getElementById("audio-enable-btn"),
+    warmingBanner: document.getElementById("warming-banner"),
     rows: new Map(),
   };
   document.querySelectorAll(".row[data-key]").forEach((row) => {
@@ -414,6 +415,16 @@
     // process, or by main.py's --prompt auto-start path.
     if (s.lyria_started) {
       hideStartPanel();
+    }
+
+    // Warming-up banner: visible only between Start-clicked and the
+    // first audio chunk landing. Lyria's lyria-realtime-exp model
+    // sometimes takes 15-20s on a cold start (the supervisor's stall
+    // watchdog auto-reconnects through the bad ones), so we tell the
+    // audience the system is alive while they wait.
+    if (els.warmingBanner) {
+      const warming = !!s.lyria_started && !s.lyria_ready;
+      els.warmingBanner.hidden = !warming;
     }
 
     for (const [key, refs] of els.rows) {

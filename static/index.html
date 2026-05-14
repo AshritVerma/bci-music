@@ -104,6 +104,18 @@
   </div>
 
   <!--
+    Lyria warming-up banner. Shown after the user clicks Start while
+    we wait for the lyria-realtime-exp model to produce its first
+    audio chunk (typically 3-6s, sometimes ~15-20s if the first
+    session stalls and the supervisor reconnects). Hidden the moment
+    state.lyria_ready arrives true.
+  -->
+  <div id="warming-banner" class="warming-banner" hidden>
+    <span class="warming-spinner" aria-hidden="true"></span>
+    <span class="warming-text">warming up Lyria<span class="warming-dots">...</span></span>
+  </div>
+
+  <!--
     Phase 10 session-ended overlay. Hidden by default; shown only after
     the user clicks Quit (or the perform process exits any other way).
     Suppresses the WS auto-reconnect loop so the page doesn't spam
