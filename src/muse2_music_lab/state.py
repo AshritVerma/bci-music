@@ -108,6 +108,19 @@ def _bounded_analysis_queue() -> "asyncio.Queue[bytes]":
     return asyncio.Queue(maxsize=config.AUDIO_ANALYSIS_QUEUE_MAX)
 
 
+def _bounded_broadcast_queue() -> "asyncio.Queue[bytes]":
+    """Bounded queue for the WebSocket-to-browser audio fan-out (cloud mode).
+
+    Lossy-on-overflow: if the broadcaster falls behind (a client on a slow
+    connection, the loop having to encode many frames in a row), drop
+    OLDEST and push NEW so latency stays bounded. Going gap-less here is
+    impossible without buffering on the browser side anyway -- that's the
+    visitor-side jitter buffer's job.
+
+    Same sizing as the analysis queue (a few seconds of audio is plenty)."""
+    return asyncio.Queue(maxsize=config.AUDIO_ANALYSIS_QUEUE_MAX)
+
+
 @dataclass
 class AppState:
     prompt: str = ""
@@ -197,6 +210,22 @@ class AppState:
     audio_analysis_queue: asyncio.Queue[bytes] = field(
         default_factory=_bounded_analysis_queue
     )
+    # Cloud-deploy fan-out queue. Populated by the Lyria session as a
+    # third tee (alongside audio_queue and audio_analysis_queue). Drained
+    # by server.audio_broadcast.run_audio_broadcast_loop, which encodes
+    # each chunk and sends it as a binary WS frame to every connected
+    # browser. Empty in local-dev runs; only populated when --cloud is on.
+    audio_broadcast_queue: asyncio.Queue[bytes] = field(
+        default_factory=_bounded_broadcast_queue
+    )
+
+    # ------- Cloud / multi-tenant flag -------
+    # True when the orchestrator is running in `--cloud` mode (Railway,
+    # any other PaaS). Forces simulated EEG, no local audio output, no
+    # browser auto-launch, no TUI. The frontend reads this from the WS
+    # snapshot to hide single-operator controls (Quit, EEG-mode toggle)
+    # that don't make sense for a shared public demo.
+    cloud_mode: bool = False
 
     # ------- Session metadata -------
     session_start_ts: float = field(default_factory=time.monotonic)
@@ -231,4 +260,8 @@ class AppState:
             # EEG mode toggle (browser shows current; lets the user swap
             # between real and simulated mid-session).
             "eeg_mode": self.eeg_mode,
+            # Cloud-mode flag: the browser uses this to hide controls
+            # (Quit, EEG-mode toggle) that don't make sense for a shared
+            # public deployment.
+            "cloud_mode": self.cloud_mode,
         }

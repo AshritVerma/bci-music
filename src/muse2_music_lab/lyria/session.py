@@ -218,6 +218,22 @@ async def _receive_loop(
                             state.audio_analysis_queue.put_nowait(data)
                         except asyncio.QueueEmpty:
                             pass
+
+                    # Cloud-mode tee: same lossy semantics for the WS
+                    # fan-out queue. The broadcaster (server/audio_broadcast)
+                    # drains this and ships each chunk as a binary WS
+                    # frame to every connected browser. In local-dev runs
+                    # nothing reads this queue and the lossy drop logic
+                    # keeps memory bounded; the cost is negligible (a
+                    # put_nowait + a discard).
+                    try:
+                        state.audio_broadcast_queue.put_nowait(data)
+                    except asyncio.QueueFull:
+                        try:
+                            state.audio_broadcast_queue.get_nowait()
+                            state.audio_broadcast_queue.put_nowait(data)
+                        except asyncio.QueueEmpty:
+                            pass
             else:
                 # Empty or unknown message; don't spam the log.
                 unknown += 1
