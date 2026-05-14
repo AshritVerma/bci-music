@@ -7,6 +7,7 @@ return plain floats or bools. Channel order is assumed to match
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, asdict
 from typing import Dict, Iterable
@@ -99,6 +100,44 @@ def compute_band_powers(
     beta = np.mean([_band_power(window[i], sampling_rate, config.BAND_BETA) for i in idx])
     theta = np.mean([_band_power(window[i], sampling_rate, config.BAND_THETA) for i in idx])
     return {"alpha": float(alpha), "beta": float(beta), "theta": float(theta)}
+
+
+def compute_asymmetry(
+    window: np.ndarray,
+    sampling_rate: int,
+    left_channel: str = "AF7",
+    right_channel: str = "AF8",
+) -> float:
+    """Frontal alpha asymmetry, normalized to [0, 1] with idle ~= 0.5.
+
+    Standard FAA = log(alpha_right) - log(alpha_left). Positive values mean
+    *less* left-frontal alpha (less alpha = more activity), historically
+    associated with approach motivation / positive affect. We tanh-squash
+    and shift so the output is bounded and easy to map into a synth knob.
+
+    Returns 0.5 on degenerate input (no channels found, no data, etc.) so
+    a missing-channel error doesn't push downstream synthesis to a knob
+    extreme.
+    """
+    if window.size == 0:
+        return 0.5
+    lookup = {n: i for i, n in enumerate(config.EEG_CHANNEL_NAMES)}
+    if left_channel not in lookup or right_channel not in lookup:
+        return 0.5
+
+    powers_l = compute_band_powers(window, sampling_rate, channels=(left_channel,))
+    powers_r = compute_band_powers(window, sampling_rate, channels=(right_channel,))
+    alpha_l = powers_l["alpha"]
+    alpha_r = powers_r["alpha"]
+
+    # Symmetric log ratio. The 1e-9 floor avoids log(0) on a dropped channel.
+    faa = math.log10(alpha_r + 1e-9) - math.log10(alpha_l + 1e-9)
+
+    # tanh keeps it bounded; the (+1)/2 shift puts the natural balance
+    # point at 0.5. Typical FAA on this headset/fit lands in roughly
+    # [-0.5, +0.5] which tanh maps to [-0.46, +0.46], i.e. [0.27, 0.73] --
+    # a reasonable musical range without saturation.
+    return 0.5 * (math.tanh(faa) + 1.0)
 
 
 class _Refractory:
