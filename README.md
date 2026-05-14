@@ -104,6 +104,14 @@ Browser controls (always available):
 - **Quit** — stops every task and exits the Python process cleanly
 - **EEG: real / simulated** — hot-swap between the headset and the
   synthetic generator without restarting
+- **Record / Save** — capture exactly what's playing (visualizer
+  canvas + Lyria audio) into a single `.webm` file (VP9 video +
+  Opus audio). Click Record to start (a red dot pulses + an elapsed
+  timer ticks), click again to stop, then Save to download. Works
+  in both local mode (sounddevice still owns the speakers; the
+  browser captures the same PCM stream silently for the recording)
+  and cloud mode. The file lands in your Downloads folder named
+  `brain-music_<YYYY-MM-DD_HH-mm-ss>.webm`.
 
 ### Useful flags
 

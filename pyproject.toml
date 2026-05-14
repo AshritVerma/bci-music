@@ -33,6 +33,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["ruff>=0.4"]
+# Headless browser for the recorder end-to-end smoke
+# (scripts/smoke_recorder.py). Not needed for production. After
+# `pip install -e .[smoke-tests]`, run `python -m playwright install chromium`.
+smoke-tests = ["playwright>=1.40"]
 # Diffusers/MPS fallback for the Phase 8 seed-image step (used only if the
 # MLX-Diffusion path doesn't install cleanly on the M4 Max).
 diffusers-mps = [

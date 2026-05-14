@@ -121,6 +121,28 @@ The brain-music coupling at the new sensitivity:
 The seed image evolves every ~24 s based on cumulative drift; you
 should see ~2-3 evolutions in a 60-90 s segment.
 
+### Recording the demo
+
+You can capture the entire demo (visualizer + Lyria audio) into a
+single `.webm` file straight from the browser:
+
+- [ ] Once Lyria is producing audio (the warming-up banner has
+      cleared), click **Record** in the header. A red dot pulses
+      and an elapsed timer starts ticking next to the button.
+- [ ] Run the demo as long as you want. Audio is captured in lossy
+      Opus at 48 kHz stereo; video is captured from the visualizer
+      canvas at up to 60 fps in VP9. Bit rate is whatever the
+      browser picks; expect ~10 MB per minute.
+- [ ] Click **Stop** (same button, label flips). The blob is held
+      in memory; the **Save** button enables.
+- [ ] Click **Save**. The file lands in your Downloads folder as
+      `brain-music_<YYYY-MM-DD_HH-mm-ss>.webm`.
+- [ ] If you're going to record again, the previous unsaved blob
+      will be discarded after a confirm prompt. Save first if you
+      care about it.
+- [ ] The file is **just the canvas + audio** -- no HUD overlay,
+      no buttons, no prompt readout. Pure performance footage.
+
 ### Changing the prompt mid-set
 
 You can pivot to a totally different vibe without restarting:
@@ -170,6 +192,22 @@ You can pivot to a totally different vibe without restarting:
   yet (the model needs a beat or two to incorporate). Wait ~5 s; if
   still nothing, the change DID land in `state.prompt` (visible in
   the diagnostic HUD with `h`) — just give the model another bar.
+
+- **Record button greyed out**: the session hasn't started yet
+  (lyria_started=false). Click Start first; Record enables once
+  Lyria is alive.
+
+- **Recording WebM is silent**: in local mode, audio.js is
+  intentionally muted (sounddevice owns the speakers). The recorder
+  has its OWN audio path that pulls PCM from the WS broadcast. If
+  the recording is silent, check that the perform terminal is
+  showing `[audio-bcast] started` near boot — the broadcaster must
+  be running for the recorder to get audio.
+
+- **Recording lost on tab close**: if you close the tab without
+  clicking Save, the in-memory blob is gone. The browser's
+  beforeunload prompt should warn you, but sometimes Cmd+W is
+  faster than the prompt. Always click Save BEFORE closing.
 
 - **Process won't quit cleanly**: Ctrl-C usually works in <3 s. If
   it hangs, second Ctrl-C escalates. Worst case:
