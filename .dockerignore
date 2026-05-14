@@ -1,0 +1,68 @@
+# Keep the Docker build context small + reproducible.
+# Anything that's gitignored or only useful for local-dev should be
+# listed here so it doesn't bloat the image or invalidate the cache
+# when an unrelated local file changes.
+
+# ---- VCS / IDE ----
+.git
+.gitignore
+.gitattributes
+.cursor
+.vscode
+.idea
+*.swp
+
+# ---- Python local dev ----
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+.venv
+venv
+env
+.eggs
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+coverage.xml
+htmlcov
+
+# ---- Local secrets / env ----
+# .env in the repo would override the Railway-provided env vars;
+# never bake one into the image.
+.env
+.env.local
+*.env
+
+# ---- Generated / runtime artifacts ----
+# Seed image is regenerated per session; cache dir is for the seed
+# evolver -- skipped in cloud mode anyway. Don't ship a stale PNG.
+static/seed.png
+static/cache/
+
+# ---- Notebooks, scratch, demos ----
+notebooks/
+scratch/
+*.ipynb
+*.mov
+*.mp4
+*.gif
+*.zip
+
+# ---- Docs we don't ship to runtime ----
+ROADMAP.md
+DEPLOYMENT.md
+PROJECT_PLAN.md
+docs/
+
+# ---- Tests + dev scripts (optional but keeps image lean) ----
+tests/
+scripts/
+
+# ---- Build artifacts ----
+build/
+dist/
+*.log
+*.tmp
