@@ -24,3 +24,16 @@ recordings/
 *.xdf
 *.mov
 *.egg-info/
+
+# Secrets
+.env
+
+# Phase-0 salvage: code stash kept locally, not committed
+.salvage/
+
+# Generated artifacts (Phase 8 seed image, future cached assets).
+# The static/ directory itself is tracked because it holds the browser
+# visualizer (index.html, app.js, style.css). Only generated assets are
+# ignored.
+static/seed.png
+static/cache/
