@@ -185,24 +185,6 @@
     </div>
   </div>
 
-  <!--
-    Cloud-mode "click to enable sound" overlay. Browsers refuse to
-    start an AudioContext without a user gesture (autoplay policy),
-    so we show this once the WS sends an audio_init message. Hidden
-    in local-mode pages because sounddevice plays on the host.
-  -->
-  <div id="audio-enable-overlay" class="audio-enable-overlay" hidden>
-    <button
-      id="audio-enable-btn"
-      class="audio-enable-btn"
-      type="button"
-      title="Browsers don't allow audio to start without a user click. Tap to enable."
-    >
-      <span class="audio-enable-icon">♪</span>
-      <span class="audio-enable-text">click to enable sound</span>
-    </button>
-  </div>
-
   <main>
     <section class="panel">
       <h2>EEG</h2>
@@ -249,18 +231,6 @@
       </div>
     </section>
 
-    <section class="panel">
-      <h2>Audio</h2>
-      <div class="row" data-key="rms">
-        <span class="label">rms</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
-      </div>
-      <div class="row" data-key="centroid">
-        <span class="label">centroid</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
-      </div>
-      <div class="row" data-key="onset">
-        <span class="label">onset</span><span class="value">0.00</span><span class="bar"><span class="fill"></span></span>
-      </div>
-    </section>
   </main>
 
   <footer>

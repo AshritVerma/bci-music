@@ -38,8 +38,6 @@
     startBtn: document.getElementById("start-btn"),
     startStatus: document.getElementById("start-status"),
     endedOverlay: document.getElementById("ended-overlay"),
-    audioOverlay: document.getElementById("audio-enable-overlay"),
-    audioBtn: document.getElementById("audio-enable-btn"),
     warmingBanner: document.getElementById("warming-banner"),
     recordBtn: document.getElementById("record-btn"),
     recordLabel: document.querySelector("#record-btn .record-label"),
@@ -361,12 +359,10 @@
   //   * Quit and EEG-mode toggle are hidden (single visitor must NOT
   //     be able to break the experience for everyone else)
   //   * audio.js owns playback (Lyria PCM streams over WS, plays via
-  //     Web Audio in the browser instead of sounddevice on the host)
-  //   * The audio-enable overlay is shown after the first audio_init
-  //     message (deferred until the AudioContext is suspended, which
-  //     it always is until a user gesture).
+  //     Web Audio in the browser instead of sounddevice on the host).
+  //     The browser autoplay policy is satisfied by the first user
+  //     gesture (typically the Start click) -- see tryResumeAudio.
   let cloudMode = false;
-  let audioInitSeen = false;
   function applyCloudMode(enabled) {
     if (enabled === cloudMode) return;
     cloudMode = enabled;
@@ -378,30 +374,24 @@
     }
   }
 
-  // ---- audio-enable overlay (cloud-mode only) ----------------------
-  // Shown after the WS sends audio_init AND the AudioContext is in the
-  // "suspended" state (browser autoplay policy). One click resumes the
-  // context and hides the overlay.
-  function refreshAudioOverlay() {
-    if (!audioInitSeen || !window.audio) {
-      els.audioOverlay.hidden = true;
-      return;
-    }
-    const status = window.audio.status();
-    const needsClick = status.enabled && status.state !== "running";
-    els.audioOverlay.hidden = !needsClick;
-  }
-  els.audioBtn.addEventListener("click", async () => {
+  // ---- audio resume (cloud-mode autoplay policy) -------------------
+  // In cloud mode the AudioContext starts suspended and needs a user
+  // gesture to resume. We attach a single one-shot listener to the
+  // very first click anywhere on the page so the AudioContext flips
+  // to "running" silently -- no big "click to enable sound" overlay
+  // blocking the screen. The Start button click in cloud mode is
+  // itself a valid user gesture, so audio is usually playing before
+  // the user notices anything was deferred.
+  function tryResumeAudio() {
     if (window.audio && window.audio.resume) {
-      await window.audio.resume();
+      window.audio.resume().catch(() => { /* swallow */ });
     }
-    refreshAudioOverlay();
-  });
-  // Subscribe to audio.js state changes so the overlay hides as soon
-  // as the context transitions to "running".
-  if (window.audio && window.audio.onState) {
-    window.audio.onState(() => refreshAudioOverlay());
   }
+  // capture-phase + once = first user gesture anywhere wins, no
+  // matter what element absorbs it.
+  document.addEventListener("click", tryResumeAudio, { once: true, capture: true });
+  document.addEventListener("keydown", tryResumeAudio, { once: true, capture: true });
+  document.addEventListener("touchstart", tryResumeAudio, { once: true, capture: true });
 
   // ---- Phase 10: session-ended state -------------------------------
   // Once the user clicks Quit (or the perform process exits some other
@@ -885,8 +875,6 @@
         if (window.recorder && window.recorder.setup) {
           window.recorder.setup(initMsg);
         }
-        audioInitSeen = true;
-        refreshAudioOverlay();
         return;
       }
 
