@@ -4,23 +4,43 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "muse2-music-lab"
-version = "0.1.0"
-description = "Stream EEG from a Muse 2 via BrainFlow, extract musical features, and route them to a DAW as MIDI CC or OSC."
+version = "0.2.0"
+description = "Muse 2 EEG -> Lyria RealTime music + Three.js shader visualizer (single Python process, browser frontend)."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Ashrit" }]
 dependencies = [
+    # EEG acquisition + diagnostics
+    "bleak>=0.22",
     "brainflow>=5.10",
-    "mido>=1.3",
     "numpy>=1.24",
-    "python-osc>=1.8",
-    "python-rtmidi>=1.5",
+    "rich>=13",
+    # brainflow imports `pkg_resources` at runtime; setuptools 81+
+    # (May 2025) removed it. Pin until brainflow upstream switches to
+    # importlib.metadata.
+    "setuptools<81",
+    # `perform` pipeline
+    "google-genai>=2.2",
+    "sounddevice>=0.4",
+    "aiohttp>=3.9",
+    "python-dotenv>=1.0",
+    "pillow>=10",
+    # Prompt-guard rewrite layer (Claude Opus translates Lyria-filtered
+    # prompts into pure sonic descriptors). See src/muse2_music_lab/music/.
+    "anthropic>=0.40",
 ]
 
 [project.optional-dependencies]
 dev = ["ruff>=0.4"]
-tui = ["rich>=13"]
+# Diffusers/MPS fallback for the Phase 8 seed-image step (used only if the
+# MLX-Diffusion path doesn't install cleanly on the M4 Max).
+diffusers-mps = [
+    "torch>=2.2",
+    "transformers>=4.40",
+    "diffusers>=0.27",
+    "accelerate>=0.30",
+]
 
 [project.scripts]
 muse2 = "muse2_music_lab.cli:main"
