@@ -116,6 +116,24 @@
     </div>
   </div>
 
+  <!--
+    Cloud-mode "click to enable sound" overlay. Browsers refuse to
+    start an AudioContext without a user gesture (autoplay policy),
+    so we show this once the WS sends an audio_init message. Hidden
+    in local-mode pages because sounddevice plays on the host.
+  -->
+  <div id="audio-enable-overlay" class="audio-enable-overlay" hidden>
+    <button
+      id="audio-enable-btn"
+      class="audio-enable-btn"
+      type="button"
+      title="Browsers don't allow audio to start without a user click. Tap to enable."
+    >
+      <span class="audio-enable-icon">♪</span>
+      <span class="audio-enable-text">click to enable sound</span>
+    </button>
+  </div>
+
   <main>
     <section class="panel">
       <h2>EEG</h2>
@@ -185,8 +203,11 @@
     classic script tag for backwards compat with the simple WS
     plumbing. They communicate via window.visualizer.{setTargets,
     refreshSeed} -- one-way calls from app.js into the visualizer.
+    audio.js is the cloud-mode browser-side audio sink (no-op when
+    the server doesn't send an audio_init message).
   -->
   <script type="module" src="/static/visualizer.js"></script>
+  <script src="/static/audio.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

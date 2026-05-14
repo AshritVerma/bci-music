@@ -447,3 +447,49 @@ body.hud-hidden #hud-toggle {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* ---- cloud-mode "click to enable sound" overlay ----
+   Shown when the server is running in --cloud mode (sends an
+   audio_init WS message) AND the AudioContext is suspended (browser
+   autoplay policy). Once the user clicks, audio.js calls resume()
+   and the overlay hides itself. */
+.audio-enable-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;            /* above HUD, below ended-overlay (60) */
+  background: rgba(8, 11, 14, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.audio-enable-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--panel-bg-strong);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 16px;
+  letter-spacing: 0.06em;
+  padding: 18px 28px;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  box-shadow: 0 12px 38px rgba(0, 0, 0, 0.55);
+}
+.audio-enable-btn:hover {
+  background: rgba(20, 28, 36, 0.95);
+  border-color: rgba(160, 200, 240, 0.4);
+}
+.audio-enable-icon {
+  font-size: 22px;
+  line-height: 1;
+  color: var(--accent);
+}
+.audio-enable-text {
+  text-transform: lowercase;
+}

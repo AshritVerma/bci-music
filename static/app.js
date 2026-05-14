@@ -37,6 +37,8 @@
     startBtn: document.getElementById("start-btn"),
     startStatus: document.getElementById("start-status"),
     endedOverlay: document.getElementById("ended-overlay"),
+    audioOverlay: document.getElementById("audio-enable-overlay"),
+    audioBtn: document.getElementById("audio-enable-btn"),
     rows: new Map(),
   };
   document.querySelectorAll(".row[data-key]").forEach((row) => {
@@ -202,6 +204,54 @@
     }
   }
 
+  // ---- cloud-mode state -------------------------------------------
+  // True once the server has told us we're talking to a --cloud
+  // deployment (via state.snapshot().cloud_mode = true). When true:
+  //   * Quit and EEG-mode toggle are hidden (single visitor must NOT
+  //     be able to break the experience for everyone else)
+  //   * audio.js owns playback (Lyria PCM streams over WS, plays via
+  //     Web Audio in the browser instead of sounddevice on the host)
+  //   * The audio-enable overlay is shown after the first audio_init
+  //     message (deferred until the AudioContext is suspended, which
+  //     it always is until a user gesture).
+  let cloudMode = false;
+  let audioInitSeen = false;
+  function applyCloudMode(enabled) {
+    if (enabled === cloudMode) return;
+    cloudMode = enabled;
+    document.body.classList.toggle("cloud-mode", enabled);
+    if (enabled) {
+      // Hide controls that don't make sense for shared deploys.
+      els.quitBtn.hidden = true;
+      els.eegModeBtn.hidden = true;
+    }
+  }
+
+  // ---- audio-enable overlay (cloud-mode only) ----------------------
+  // Shown after the WS sends audio_init AND the AudioContext is in the
+  // "suspended" state (browser autoplay policy). One click resumes the
+  // context and hides the overlay.
+  function refreshAudioOverlay() {
+    if (!audioInitSeen || !window.audio) {
+      els.audioOverlay.hidden = true;
+      return;
+    }
+    const status = window.audio.status();
+    const needsClick = status.enabled && status.state !== "running";
+    els.audioOverlay.hidden = !needsClick;
+  }
+  els.audioBtn.addEventListener("click", async () => {
+    if (window.audio && window.audio.resume) {
+      await window.audio.resume();
+    }
+    refreshAudioOverlay();
+  });
+  // Subscribe to audio.js state changes so the overlay hides as soon
+  // as the context transitions to "running".
+  if (window.audio && window.audio.onState) {
+    window.audio.onState(() => refreshAudioOverlay());
+  }
+
   // ---- Phase 10: session-ended state -------------------------------
   // Once the user clicks Quit (or the perform process exits some other
   // way), we don't want the WS to silently keep retrying every few
@@ -350,6 +400,14 @@
       setEegMode(s.eeg_mode);
     }
 
+    // Cloud-deploy detection from the WS snapshot. Updates header
+    // affordances + the document body class so cloud-only CSS rules
+    // can apply (currently just the .cloud-mode { display: none } on
+    // the Quit button via the .hidden attribute set in JS).
+    if (typeof s.cloud_mode === "boolean") {
+      applyCloudMode(s.cloud_mode);
+    }
+
     // Phase 10: hide the Start panel once Lyria has been started --
     // either by this browser (we already disabled the button on submit)
     // or by another browser session connected to the same perform
@@ -424,6 +482,10 @@
       scheduleReconnect();
       return;
     }
+    // Cloud mode: server pushes raw int16 PCM as binary frames. ArrayBuffer
+    // gives us zero-copy access to the bytes; the default "blob" would
+    // require an async .arrayBuffer() round-trip per chunk.
+    ws.binaryType = "arraybuffer";
 
     ws.addEventListener("open", () => {
       setConn(true);
@@ -442,8 +504,37 @@
     });
 
     ws.addEventListener("message", (ev) => {
+      // Three message shapes share /ws:
+      //   1. ArrayBuffer  -> raw PCM chunk for cloud-mode audio
+      //   2. JSON ack      -> { ack:true, ok, error?, info? }
+      //   3. JSON state    -> state.snapshot()  (the steady stream)
+      //   4. JSON audio_init -> { type:"audio_init", sample_rate, ... }
+      //                         (one-shot, only in cloud mode, on connect)
+      if (ev.data instanceof ArrayBuffer) {
+        if (window.audio && window.audio.pushChunk) {
+          window.audio.pushChunk(ev.data);
+        }
+        return;
+      }
+
       let msg;
       try { msg = JSON.parse(ev.data); } catch (_e) { return; }
+
+      // audio_init: one-shot header that tells the browser to spin up
+      // its AudioContext at the right sample rate before the first
+      // binary frame arrives. Local-mode pages never see this.
+      if (msg && msg.type === "audio_init") {
+        if (window.audio && window.audio.setup) {
+          window.audio.setup({
+            sampleRate: msg.sample_rate,
+            channels: msg.channels,
+          });
+        }
+        audioInitSeen = true;
+        refreshAudioOverlay();
+        return;
+      }
+
       // Phase 10: server emits two message shapes -- state snapshots
       // (no `ack` field) and action acks ({ack:true, ok, error?, info?}).
       // Acks are infrequent; route them off the rate counter so they
