@@ -1,4 +1,4 @@
-# brain-music container image for Railway / any PaaS.
+# brAIn-music container image for Railway / any PaaS.
 #
 # Single-stage build on python:3.11-slim. We avoid the multi-stage
 # pattern because the wheels we install (brainflow, sounddevice) bundle

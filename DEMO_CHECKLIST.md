@@ -1,6 +1,6 @@
 # Demo day checklist
 
-Live brain-music demo: laptop + Muse 2 headset + speakers, you wearing
+Live brAIn-music demo: laptop + Muse 2 headset + speakers, you wearing
 the band, audience watching the visualizer on a screen.
 
 ## ~30 minutes before
@@ -110,7 +110,7 @@ the band, audience watching the visualizer on a screen.
 
 ## During the demo
 
-The brain-music coupling at the new sensitivity:
+The brAIn-music coupling at the new sensitivity:
 - **Eyes-closed / relaxed** → alpha rises → music brightens
 - **Mental focus / problem-solving** → beta rises → music densifies
 - **Drowsy / meditative** → theta rises → temperature climbs (more
@@ -136,7 +136,7 @@ single `.webm` file straight from the browser:
 - [ ] Click **Stop** (same button, label flips). The blob is held
       in memory; the **Save** button enables.
 - [ ] Click **Save**. The file lands in your Downloads folder as
-      `brain-music_<YYYY-MM-DD_HH-mm-ss>.webm`.
+      `brAIn-music_<YYYY-MM-DD_HH-mm-ss>.webm`.
 - [ ] If you're going to record again, the previous unsaved blob
       will be discarded after a confirm prompt. Save first if you
       care about it.

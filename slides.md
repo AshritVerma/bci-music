@@ -137,7 +137,7 @@ style: |
 <!-- _class: title -->
 <!-- _paginate: false -->
 
-# brain-music
+# brAIn-music
 
 ## Live EEG-Driven Music & Visuals from a $200 Headset
 
@@ -345,14 +345,14 @@ The headband becomes a **context broker for the room**, not just a music control
 
 ## Questions?
 
-Ashrit Verma  ·  `github.com/AshritVerma/brain-music`
+Ashrit Verma  ·  `github.com/AshritVerma/brAIn-music`
 
 ---
 
 <!-- _class: divider -->
 <!-- _paginate: false -->
 
-# Appendix
+## Appendix
 
 ---
 

@@ -1,4 +1,4 @@
-# brain-music
+# brAIn-music
 
 Live music + visuals driven by an EEG headset.
 
@@ -50,8 +50,8 @@ browser tab, type a prompt, hit Start, put the headset on.
 ## Setup
 
 ```bash
-git clone https://github.com/AshritVerma/brain-music.git
-cd brain-music
+git clone https://github.com/AshritVerma/brAIn-music.git
+cd brAIn-music
 
 uv venv --python 3.11 .venv
 source .venv/bin/activate
@@ -125,7 +125,7 @@ Browser controls (always available):
   in both local mode (sounddevice still owns the speakers; the
   browser captures the same PCM stream silently for the recording)
   and cloud mode. The file lands in your Downloads folder named
-  `brain-music_<YYYY-MM-DD_HH-mm-ss>.webm`.
+  `brAIn-music_<YYYY-MM-DD_HH-mm-ss>.webm`.
 
 ### Useful flags
 
@@ -196,7 +196,7 @@ The repo ships a `Dockerfile` + `railway.json`. From the Railway
 dashboard:
 
 1. **New Project → Deploy from GitHub repo** → pick
-   `AshritVerma/brain-music`.
+   `AshritVerma/brAIn-music`.
 2. Add environment variables under **Variables**:
    - `GEMINI_API_KEY` — required (Lyria + Imagen)
    - `ANTHROPIC_API_KEY` — optional (prompt-guard + seed-evolver)
@@ -225,11 +225,11 @@ periodically. Three controls if you care about cost:
 ### Local container smoke test
 
 ```bash
-docker build -t brain-music .
+docker build -t brAIn-music .
 docker run --rm -p 8000:8000 \
   -e GEMINI_API_KEY=$GEMINI_API_KEY \
   -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  brain-music
+  brAIn-music
 # Open http://localhost:8000/, click to enable sound, type a prompt.
 ```
 

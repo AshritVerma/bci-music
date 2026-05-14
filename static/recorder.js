@@ -97,7 +97,7 @@
   const RECORD_MAX_AHEAD_S = 0.50;
 
   // Filename prefix for the saved file. Easy to grep in Downloads.
-  const FILENAME_PREFIX = "brain-music";
+  const FILENAME_PREFIX = "brAIn-music";
 
   // --------- subscriber/notification plumbing ---------------------
 
