@@ -42,7 +42,22 @@
         title="WebSocket connection to the muse2 perform server. Auto-reconnects every few seconds while the page is open. Red means the perform process isn't running, or the page is between reconnect attempts."
       >WS: disconnected</span>
       <span id="rate" class="rate">— Hz</span>
-      <span id="prompt" class="prompt"></span>
+      <!--
+        Live session prompt. Click to edit mid-session: a textarea
+        replaces the text, Enter submits a change_prompt action that
+        triggers a Lyria weighted-prompt crossfade over LYRIA_PROMPT_
+        CHANGE_DEFAULT_CHUNKS audio chunks. Escape (or blur without
+        Enter) cancels back to display mode. The prompt-transition
+        badge next to it shows live ramp progress.
+      -->
+      <span
+        id="prompt"
+        class="prompt prompt-editable"
+        tabindex="0"
+        role="button"
+        title="Click to change the prompt mid-session. Music crossfades to the new prompt over ~16s."
+      ></span>
+      <span id="prompt-transition" class="prompt-transition" hidden></span>
       <button
         id="recalibrate-btn"
         class="header-btn"

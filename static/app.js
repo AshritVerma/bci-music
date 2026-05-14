@@ -28,6 +28,7 @@
     muse: document.getElementById("muse"),
     rate: document.getElementById("rate"),
     prompt: document.getElementById("prompt"),
+    promptTransition: document.getElementById("prompt-transition"),
     hudToggle: document.getElementById("hud-toggle"),
     recalibrateBtn: document.getElementById("recalibrate-btn"),
     quitBtn: document.getElementById("quit-btn"),
@@ -204,6 +205,151 @@
       document.activeElement.blur();
     }
   }
+
+  // ---- mid-session prompt change (click-to-edit header prompt) ------
+  // The header prompt span is clickable; click swaps it for a textarea,
+  // Enter submits a `change_prompt` action that triggers a Lyria
+  // weighted-prompt crossfade, Escape (or blur) cancels back to display
+  // mode. We track our own editing flag because the WS state stream
+  // tries to overwrite the prompt span on every snapshot -- if we
+  // didn't gate it, the user's typing would get clobbered ~10 times
+  // per second.
+  const promptEdit = {
+    editing: false,
+    // Cached so we can restore the display text on cancel without
+    // having to wait for the next snapshot to repopulate it.
+    savedDisplayText: "",
+    // The most recent values we've seen from the WS state stream.
+    // The editor reads `target || seedPrompt || prompt` as its
+    // prefill so clicking-to-edit during a transition lets you
+    // redirect from where you're currently headed (latest-wins).
+    livePrompt: "",
+    liveSeedPrompt: "",
+    liveTarget: "",
+    lyriaReady: false,
+    lyriaStarted: false,
+  };
+
+  function canEditPrompt() {
+    return promptEdit.lyriaStarted && promptEdit.lyriaReady;
+  }
+
+  function refreshPromptClass() {
+    const can = canEditPrompt();
+    els.prompt.classList.toggle("prompt-editable-ready", can);
+    els.prompt.classList.toggle("prompt-editable-locked", !can);
+    els.prompt.title = can
+      ? "Click to change the prompt mid-session. Music crossfades to the new prompt over ~16s. Enter to submit, Escape to cancel."
+      : (promptEdit.lyriaStarted
+          ? "Lyria is still warming up; the prompt becomes editable as soon as audio starts."
+          : "Press Start first to begin a session, then you can change the prompt at any time.");
+  }
+
+  function exitPromptEdit({ commit }) {
+    if (!promptEdit.editing) return;
+    promptEdit.editing = false;
+    els.prompt.classList.remove("prompt-editing");
+    // Removing the textarea by overwriting innerHTML is safe because
+    // we built the original content with textContent (no embedded
+    // markup); applyState() will refresh the text on the next tick.
+    els.prompt.textContent = promptEdit.savedDisplayText;
+    if (!commit) {
+      // Briefly flash the prompt span so the user sees the cancel
+      // landed (otherwise an Escape feels like nothing happened).
+      els.prompt.classList.add("prompt-edit-cancelled");
+      setTimeout(() => els.prompt.classList.remove("prompt-edit-cancelled"), 250);
+    }
+  }
+
+  function enterPromptEdit() {
+    if (promptEdit.editing) return;
+    if (!canEditPrompt()) {
+      // Brief visual nudge so the user knows the click registered.
+      els.prompt.classList.add("prompt-edit-locked-flash");
+      setTimeout(() => els.prompt.classList.remove("prompt-edit-locked-flash"), 350);
+      return;
+    }
+    promptEdit.editing = true;
+    promptEdit.savedDisplayText = els.prompt.textContent;
+    // Prefill priority: in-flight target > evolver-drifted seed >
+    // user's original prompt. This matches "edit from where you're
+    // currently headed" so a quick redirect during a transition
+    // doesn't make the user re-type the in-flight target.
+    const prefill = (
+      promptEdit.liveTarget ||
+      promptEdit.liveSeedPrompt ||
+      promptEdit.livePrompt ||
+      ""
+    );
+    // Build the textarea inline. One row + auto-resize via the
+    // input handler keeps the header from jumping vertically when
+    // the prompt is long.
+    els.prompt.classList.add("prompt-editing");
+    els.prompt.innerHTML = "";
+    const ta = document.createElement("textarea");
+    ta.className = "prompt-edit-input";
+    ta.rows = 1;
+    ta.value = prefill;
+    ta.spellcheck = false;
+    ta.autocomplete = "off";
+    ta.placeholder = "type a new prompt, then press Enter";
+    els.prompt.appendChild(ta);
+    // Tiny "Enter ↵" hint badge so the affordance is discoverable.
+    const hint = document.createElement("span");
+    hint.className = "prompt-edit-hint";
+    hint.textContent = "↵";
+    els.prompt.appendChild(hint);
+    ta.focus();
+    ta.setSelectionRange(prefill.length, prefill.length);
+
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        submitPromptChange(ta.value);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        exitPromptEdit({ commit: false });
+      }
+    });
+    ta.addEventListener("blur", () => {
+      // Blur cancels (so clicking elsewhere abandons the edit). If the
+      // submission already started, exitPromptEdit was called with
+      // commit=true and this is a no-op.
+      if (promptEdit.editing) exitPromptEdit({ commit: false });
+    });
+  }
+
+  function submitPromptChange(rawText) {
+    const text = (rawText || "").trim();
+    if (!text) {
+      exitPromptEdit({ commit: false });
+      return;
+    }
+    if (text === promptEdit.livePrompt && !promptEdit.liveTarget) {
+      // No-op submission; just close the editor.
+      exitPromptEdit({ commit: true });
+      return;
+    }
+    if (!sendAction({ action: "change_prompt", prompt: text })) {
+      // Not connected; keep the editor open so the user can retry
+      // when the WS comes back.
+      return;
+    }
+    // Optimistic close: the next snapshot will start showing the
+    // prompt-transition badge, which doubles as the success indicator.
+    exitPromptEdit({ commit: true });
+  }
+
+  els.prompt.addEventListener("click", enterPromptEdit);
+  els.prompt.addEventListener("keydown", (e) => {
+    // Space / Enter on the focused span enters edit mode (matches
+    // standard role=button keyboard semantics).
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      enterPromptEdit();
+    }
+  });
+  refreshPromptClass();
 
   // ---- cloud-mode state -------------------------------------------
   // True once the server has told us we're talking to a --cloud
@@ -389,14 +535,60 @@
       lastSeedVersion = s.seed_version;
     }
 
+    // Stash the live prompt fields where the click-to-edit handler
+    // can read them (it uses these as prefill priorities and as the
+    // "did anything change?" gate on submit).
+    if (typeof s.prompt === "string") promptEdit.livePrompt = s.prompt;
+    if (typeof s.seed_prompt === "string") promptEdit.liveSeedPrompt = s.seed_prompt;
+    if (typeof s.prompt_change_target === "string") promptEdit.liveTarget = s.prompt_change_target;
+    const lyriaReadyPrev = promptEdit.lyriaReady;
+    const lyriaStartedPrev = promptEdit.lyriaStarted;
+    promptEdit.lyriaReady = !!s.lyria_ready;
+    promptEdit.lyriaStarted = !!s.lyria_started;
+    if (
+      lyriaReadyPrev !== promptEdit.lyriaReady ||
+      lyriaStartedPrev !== promptEdit.lyriaStarted
+    ) {
+      refreshPromptClass();
+    }
+
     // Live-update the prompt readout: the original prompt shows once
     // (constant), but seed_prompt may evolve per cycle. Show whichever
     // is the most recent. Truncate so it doesn't push the buttons off.
+    // Skipped while the user is mid-edit so we don't clobber their
+    // typing on every snapshot.
     const displayPrompt = s.seed_prompt || s.prompt;
-    if (displayPrompt && els.prompt.dataset.last !== displayPrompt) {
+    if (
+      !promptEdit.editing &&
+      displayPrompt &&
+      els.prompt.dataset.last !== displayPrompt
+    ) {
       els.prompt.textContent = `prompt: ${displayPrompt}`;
-      els.prompt.title = displayPrompt; // full text on hover (no truncation)
       els.prompt.dataset.last = displayPrompt;
+      // Refresh the editable-tooltip too (overwrites the simple "full
+      // text on hover" tooltip from the previous DOM-text-only path).
+      refreshPromptClass();
+    }
+
+    // Prompt-transition badge: visible only while a crossfade is in
+    // flight. Format: "→ <new prompt> (37%)" so the audience sees both
+    // where the music is heading AND how far along we are. Truncates
+    // long targets via CSS (max-width + ellipsis).
+    if (els.promptTransition) {
+      const progress = Number.isFinite(s.prompt_transition_progress)
+        ? s.prompt_transition_progress
+        : 0;
+      const target = (typeof s.prompt_change_target === "string"
+        ? s.prompt_change_target
+        : "");
+      if (progress > 0 && target) {
+        const pctLabel = `${Math.round(progress * 100)}%`;
+        els.promptTransition.textContent = `→ ${target} (${pctLabel})`;
+        els.promptTransition.title = `Crossfading to: "${target}" -- ${pctLabel} complete`;
+        els.promptTransition.hidden = false;
+      } else {
+        els.promptTransition.hidden = true;
+      }
     }
 
     // Phase 10: drive the Muse-band pill from the snapshot.
