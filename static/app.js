@@ -347,6 +347,14 @@
 
   els.prompt.addEventListener("click", enterPromptEdit);
   els.prompt.addEventListener("keydown", (e) => {
+    // Bubble guard: keydown events from the inline edit textarea
+    // (which is a CHILD of els.prompt) bubble up here. Without this
+    // check, typing a space inside the editor would hit the span
+    // handler, get preventDefault()ed, and never reach the textarea
+    // -- so the user couldn't type spaces in their new prompt.
+    // We only want to react to keys actually pressed on the span
+    // itself (role=button activation).
+    if (e.target !== els.prompt) return;
     // Space / Enter on the focused span enters edit mode (matches
     // standard role=button keyboard semantics).
     if (e.key === " " || e.key === "Enter") {
