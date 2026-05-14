@@ -38,6 +38,10 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from muse2_music_lab import config
+from muse2_music_lab.server.audio_broadcast import (
+    audio_init_message,
+    run_audio_broadcast_loop,
+)
 from muse2_music_lab.state import AppState
 
 
@@ -46,6 +50,10 @@ class ServerOptions:
     """Subset of PerformOptions the server cares about."""
 
     http_port: int = 8000
+    # Cloud mode: also bind to 0.0.0.0 (so PaaS containers can reach
+    # the listener) and spawn the audio broadcaster that ships Lyria
+    # PCM as binary WS frames to every connected browser.
+    cloud_mode: bool = False
     no_browser: bool = False
     # Phase 10: orchestrator stop event so a Quit action from the
     # browser can request a graceful shutdown of the whole perform
@@ -80,6 +88,24 @@ async def _index(request: web.Request) -> web.FileResponse:
     return web.FileResponse(static_dir / "index.html")
 
 
+async def _health(request: web.Request) -> web.Response:
+    """Healthcheck endpoint for Railway / any PaaS load balancer.
+
+    Returns 200 + a tiny JSON body whenever the server is alive and the
+    AppState dataclass is intact. Used by the Railway healthcheck path
+    in railway.json. Cheap enough to call once a second forever.
+    """
+    state: AppState = request.app["state"]
+    body = {
+        "status": "ok",
+        "uptime_s": round(time.monotonic() - state.session_start_ts, 1),
+        "lyria_started": state.lyria_started,
+        "lyria_chunks": state.lyria_chunks,
+        "cloud_mode": state.cloud_mode,
+    }
+    return web.json_response(body)
+
+
 async def _websocket(request: web.Request) -> web.WebSocketResponse:
     """WebSocket endpoint: accept, register, dispatch actions, deregister.
 
@@ -97,6 +123,16 @@ async def _websocket(request: web.Request) -> web.WebSocketResponse:
     clients.add(ws)
     peer = request.remote or "?"
     print(f"[server] ws connect from {peer} (clients={len(clients)})", flush=True)
+
+    # Cloud mode: send the audio_init header immediately so the browser
+    # can spin up its AudioContext at the right sample rate / channel
+    # count before any binary PCM frames arrive. Local-mode browsers
+    # ignore it (their audio comes from sounddevice on the host).
+    if state.cloud_mode:
+        try:
+            await ws.send_str(audio_init_message())
+        except Exception as e:
+            print(f"[server] failed to send audio_init: {e!r}", flush=True)
 
     try:
         async for msg in ws:
@@ -172,6 +208,11 @@ async def _handle_action(
         # task (real BLE <-> synthetic) without restarting the
         # process. Validation is strict so the supervisor never sees
         # a value it doesn't expect.
+        if state.cloud_mode:
+            # Public deploys can't reach a real Muse 2; the toggle is
+            # locked in cloud mode anyway, but defense-in-depth.
+            await _ack(ws, ok=False, error="EEG mode is locked to 'simulated' in cloud mode")
+            return
         target = (msg.get("mode") or "").strip().lower()
         if target not in ("real", "simulated"):
             await _ack(ws, ok=False, error=f"mode must be 'real' or 'simulated' (got {target!r})")
@@ -191,6 +232,11 @@ async def _handle_action(
         # audio, server, evolver, ...) cancels in unison. We ack BEFORE
         # setting it so the browser sees the response before the WS
         # closes underneath it.
+        if state.cloud_mode:
+            # In a public deployment, ANY visitor must NOT be able to
+            # kill the service for everyone else. Refuse politely.
+            await _ack(ws, ok=False, error="quit is disabled in cloud mode")
+            return
         await _ack(ws, ok=True)
         if opts.stop_evt is not None:
             print("[server] action=quit -- requesting orchestrator shutdown", flush=True)
@@ -358,19 +404,24 @@ async def run_server_loop(state: AppState, opts: ServerOptions) -> None:
     app["server_opts"] = opts
 
     app.router.add_get("/", _index)
+    app.router.add_get("/health", _health)
     app.router.add_get(config.SERVER_WS_PATH, _websocket)
     app.router.add_static("/static/", path=static_dir, show_index=False)
 
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
-    site = web.TCPSite(runner, host="localhost", port=opts.http_port)
+    # Cloud mode binds to 0.0.0.0 so PaaS containers (Railway, Fly, etc.)
+    # can route external traffic to the listener; local dev keeps localhost
+    # so we don't unexpectedly expose a perform session over LAN.
+    bind_host = "0.0.0.0" if opts.cloud_mode else "localhost"
+    site = web.TCPSite(runner, host=bind_host, port=opts.http_port)
 
     try:
         try:
             await site.start()
         except OSError as e:
             print(
-                f"[server] FAILED to bind localhost:{opts.http_port}: {e}. "
+                f"[server] FAILED to bind {bind_host}:{opts.http_port}: {e}. "
                 "Is another perform / dev server already running? "
                 "(Use --http-port to pick a different port, or --no-server "
                 "to skip this task entirely.)",
@@ -380,9 +431,9 @@ async def run_server_loop(state: AppState, opts: ServerOptions) -> None:
             raise
 
         print(
-            f"[server] listening on http://localhost:{opts.http_port}/  "
+            f"[server] listening on http://{bind_host}:{opts.http_port}/  "
             f"(ws {config.SERVER_WS_PATH}, broadcast "
-            f"{config.SERVER_BROADCAST_HZ:.0f} Hz)",
+            f"{config.SERVER_BROADCAST_HZ:.0f} Hz, cloud_mode={opts.cloud_mode})",
             flush=True,
         )
 
@@ -392,6 +443,14 @@ async def run_server_loop(state: AppState, opts: ServerOptions) -> None:
         opener = asyncio.create_task(
             _maybe_open_browser(opts), name="server-open-browser"
         )
+        # Cloud mode: also spawn the audio fan-out task. In local mode
+        # this task isn't needed -- sounddevice plays audio on the host.
+        audio_bcaster: "asyncio.Task | None" = None
+        if opts.cloud_mode:
+            audio_bcaster = asyncio.create_task(
+                run_audio_broadcast_loop(app, state),
+                name="server-audio-bcast",
+            )
 
         # Park forever: cancellation comes from the orchestrator on SIGINT.
         # The broadcaster task does the actual work; we just hold the
@@ -401,10 +460,13 @@ async def run_server_loop(state: AppState, opts: ServerOptions) -> None:
         finally:
             # Tear down the inner tasks first; mirrors the lyria session
             # shutdown pattern so we never orphan a child task.
-            for t in (broadcaster, opener):
+            children = [broadcaster, opener]
+            if audio_bcaster is not None:
+                children.append(audio_bcaster)
+            for t in children:
                 if not t.done():
                     t.cancel()
-            await asyncio.gather(broadcaster, opener, return_exceptions=True)
+            await asyncio.gather(*children, return_exceptions=True)
 
     except asyncio.CancelledError:
         print("[server] cancelled", flush=True)
