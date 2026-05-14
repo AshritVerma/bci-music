@@ -50,6 +50,36 @@ def _clip01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
 
 
+def _expand(x: float, gain: float) -> float:
+    """Symmetrically amplify deviation from the 0.5 neutral midpoint.
+
+    Maps x in [0, 1] to `0.5 + (x - 0.5) * gain`, then clips back to
+    [0, 1]. The neutral point is preserved (x=0.5 -> y=0.5) so the
+    "doing nothing" Lyria state is unchanged regardless of gain.
+
+    Why this curve and not a smooth one (e.g. tanh):
+
+      * Linear is predictable: GAIN=2 means literally "deviations
+        twice as large". The operator's mental model matches reality.
+      * Saturation at the [0,1] boundary is fine -- Lyria's BPM /
+        density / brightness / temperature all clamp to their
+        configured ranges anyway, so a pre-Lyria saturation just
+        moves "we hit the wall" upstream by one step.
+      * The EEG normalizer (smoother.py) already applies a tanh
+        squash; stacking another smooth curve here would add lag-
+        looking compression without buying us musicality.
+
+    GAIN values:
+      1.0  -> identity (legacy 1:1 behavior)
+      2.0  -> default (~2x apparent responsiveness)
+      3.0  -> aggressive (saturates at modest brain shifts)
+      <1.0 -> compresses toward the midpoint (deliberately calmer)
+    """
+    g = max(0.0, float(gain))
+    y = 0.5 + (float(x) - 0.5) * g
+    return _clip01(y)
+
+
 @dataclass(frozen=True)
 class LyriaParams:
     """Plain-data view of what we'd send to Lyria.
@@ -82,17 +112,25 @@ def state_to_lyria_params(
     beta: float,
     theta: float,
     asymmetry: float,
+    gain: Optional[float] = None,
 ) -> LyriaParams:
     """Translate normalized EEG features in [0, 1] into LyriaParams.
 
     Pure: all the SDK / asyncio stuff lives in `session.py`. Same input
     always yields the same output, which makes the mapping easy to tune
     by playing recorded AppState snapshots through it.
+
+    `gain` is the contrast knob applied symmetrically around 0.5 BEFORE
+    interpolating into Lyria's parameter ranges (see _expand). Defaults
+    to config.LYRIA_SENSITIVITY_GAIN; pass an explicit value to A/B in
+    a REPL or unit tests without touching the global.
     """
-    a = _clip01(alpha)
-    b = _clip01(beta)
-    t = _clip01(theta)
-    asym = _clip01(asymmetry)
+    g = config.LYRIA_SENSITIVITY_GAIN if gain is None else float(gain)
+
+    a = _expand(alpha, g)
+    b = _expand(beta, g)
+    t = _expand(theta, g)
+    asym = _expand(asymmetry, g)
 
     bpm = int(round(_lerp(config.LYRIA_BPM_MIN, config.LYRIA_BPM_MAX, asym)))
     density = b

@@ -106,6 +106,30 @@ LYRIA_BPM_MAX: int = 140               # asymmetry=1 (right-frontal lean)
 LYRIA_TEMPERATURE_MIN: float = 0.6     # theta=0 (alert / drowsy off)
 LYRIA_TEMPERATURE_MAX: float = 1.8     # theta=1 (drowsy / dreamy on)
 
+# How aggressively EEG deviations from the neutral 0.5 midpoint amplify
+# into Lyria control changes. The mapping in lyria/mapping.py rewrites
+# each feature x as `0.5 + (x - 0.5) * GAIN` (then clips to [0, 1]) BEFORE
+# linear-interpolating into the BPM/temperature ranges. Effect is a
+# "contrast knob" on the brain -> music coupling:
+#
+#   GAIN = 1.0 (off):         x=0.65 -> y=0.65  ("standard mapping")
+#   GAIN = 2.0 (default):     x=0.65 -> y=0.80  ("twice as responsive")
+#   GAIN = 3.0 (aggressive):  x=0.65 -> y=0.95  ("nearly saturated at 0.65")
+#
+# Why a gain instead of just widening the parameter ranges: the EEG
+# normalizer's tanh squashes z-scores into ~[0.05, 0.95] even at strong
+# brain shifts (z=±2 -> y=0.04 / 0.96). A linear 1:1 mapping wastes
+# that headroom -- the music never reaches the bright/dense ends of
+# the Lyria envelope unless you basically stop existing. The gain
+# pulls those mid-range deviations into the audibly-extreme zone where
+# they belong.
+#
+# Defaults to 2.0 because that's the lowest setting where the change is
+# unmistakably audible to the wearer in the first 5-10 seconds of focus
+# vs. eyes-closed transitions. Push to 2.5-3.0 if even faster response
+# is wanted; pull below 1.5 if the music feels jittery.
+LYRIA_SENSITIVITY_GAIN: float = 2.0
+
 # How long to wait between reconnect attempts on Lyria session failure.
 # Lyria's WebSocket can drop on transient network blips; we treat a drop
 # the same as the EEG reconnect supervisor -- log, sleep, retry.
